@@ -1,23 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from typing import List
 from app.db.database import get_db
 from app.models.models import Project
+from app.schemas.project import ProjectCreate, ProjectResponse
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
-@router.get("/")
+@router.get("/", response_model=List[ProjectResponse])
 def get_projects(db: Session = Depends(get_db)):
     return db.query(Project).all()
 
-@router.post("/")
-def create_project(name: str, group_name: str = None, db: Session = Depends(get_db)):
-    project = Project(name=name, group_name=group_name)
-    db.add(project)
+@router.post("/", response_model=ProjectResponse)
+def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
+    new_project = Project(name=project.name, group_name=project.group_name)
+    db.add(new_project)
     db.commit()
-    db.refresh(project)
-    return project
+    db.refresh(new_project)
+    return new_project
 
-@router.get("/{project_id}")
+@router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(project_id: int, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
