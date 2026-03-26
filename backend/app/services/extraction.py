@@ -1,4 +1,5 @@
 import os
+import logging
 from azure.ai.formrecognizer import DocumentAnalysisClient
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import HttpResponseError
@@ -6,8 +7,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 AZURE_ENDPOINT = os.getenv("AZURE_FORM_RECOGNIZER_ENDPOINT")
 AZURE_KEY = os.getenv("AZURE_FORM_RECOGNIZER_KEY")
+
+MAX_RAW_TEXT_CHARS = 8000
 
 
 def get_client():
@@ -38,6 +43,7 @@ def extract_invoice(file_path: str) -> dict:
             "confidence_scores": {},
             "raw_field_count": 0,
             "line_items": [],
+            "raw_text": "",
         }
 
     doc = result.documents[0]
@@ -93,10 +99,27 @@ def extract_invoice(file_path: str) -> dict:
                     if item_fields.get("Amount") else None,
             })
 
+    # Build raw text for Claude fallback
+    raw_text = ""
+    try:
+        raw_text_parts = []
+        for page in result.pages:
+            if hasattr(page, "lines") and page.lines:
+                page_text = "\n".join(
+                    line.content for line in page.lines if line.content
+                )
+                raw_text_parts.append(page_text)
+        raw_text = "\n\n--- PAGE BREAK ---\n\n".join(raw_text_parts).strip()
+        raw_text = raw_text[:MAX_RAW_TEXT_CHARS]
+    except Exception as e:
+        raw_text = ""
+        logger.warning(f"Could not build raw_text from OCR result: {e}")
+
     return {
         "status": "ok",
         "extracted_fields": extracted,
         "confidence_scores": confidence,
         "raw_field_count": len(fields),
         "line_items": line_items,
+        "raw_text": raw_text,
     }

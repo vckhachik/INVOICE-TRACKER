@@ -8,6 +8,7 @@ from app.db.database import get_db
 from app.models.models import Invoice, InvoiceFile
 from app.schemas.invoice import InvoiceResponse, InvoiceStatusUpdate
 from app.services.extraction import extract_invoice
+from app.services.entity_extraction import extract_entity_from_text
 
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
 
@@ -15,6 +16,13 @@ STORAGE_PATH = "storage/invoices"
 os.makedirs(STORAGE_PATH, exist_ok=True)
 
 ALLOWED_TYPES = {"application/pdf", "image/png", "image/jpeg"}
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
+
+
+def clean_entity(name: str) -> Optional[str]:
+    if not name:
+        return None
+    return name.strip()
 
 
 @router.get("/", response_model=List[InvoiceResponse])
@@ -43,13 +51,22 @@ def get_invoices(
 def upload_invoice(file: UploadFile = File(...), db: Session = Depends(get_db)):
     try:
         contents = file.file.read()
+
         if not contents:
             raise HTTPException(status_code=400, detail="Empty file")
+
+        if len(contents) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail="File too large. Maximum 20MB.")
 
         if file.content_type not in ALLOWED_TYPES:
             raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        # SHA-256 for safer deduplication
+        # Validate extension
+        original_name = os.path.basename(file.filename or "uploaded_file")
+        extension = os.path.splitext(original_name)[1].lower()
+        if extension not in {".pdf", ".png", ".jpg", ".jpeg"}:
+            raise HTTPException(status_code=400, detail="Unsupported file extension")
+
         file_hash = hashlib.sha256(contents).hexdigest()
 
         existing = db.query(InvoiceFile).filter(
@@ -58,9 +75,6 @@ def upload_invoice(file: UploadFile = File(...), db: Session = Depends(get_db)):
         if existing:
             raise HTTPException(status_code=409, detail="Duplicate invoice file")
 
-        # Sanitise filename
-        original_name = os.path.basename(file.filename or "uploaded_file")
-        extension = os.path.splitext(original_name)[1].lower()
         stored_filename = f"{file_hash}{extension}"
         stored_path = os.path.join(STORAGE_PATH, stored_filename)
 
@@ -74,7 +88,7 @@ def upload_invoice(file: UploadFile = File(...), db: Session = Depends(get_db)):
             mime_type=file.content_type
         )
         db.add(invoice_file)
-        db.flush()  # gets invoice_file.id without full commit
+        db.flush()
 
         invoice = Invoice(
             file_id=invoice_file.id,
@@ -151,11 +165,33 @@ def trigger_extraction(invoice_id: int, db: Session = Depends(get_db)):
         fields = result["extracted_fields"]
         confidence = result["confidence_scores"]
 
+        # Supplier
         invoice.supplier_name_raw = str(fields.get("supplier_name_raw") or "")
-        invoice.paying_entity_raw = str(fields.get("paying_entity_raw") or "")
+
+        # Paying entity — Azure first, Claude fallback
+        paying_entity = fields.get("paying_entity_raw")
+        entity_source = "azure"
+        entity_confidence = None
+
+        if not paying_entity or not str(paying_entity).strip():
+            if result.get("raw_text"):
+                claude_result = extract_entity_from_text(result["raw_text"])
+                entity = claude_result.get("entity")
+                if (
+                    claude_result.get("confidence") in ["high", "medium"]
+                    and entity
+                    and isinstance(entity, str)
+                ):
+                    paying_entity = clean_entity(entity)
+                    entity_source = "llm"
+                    entity_confidence = claude_result.get("confidence")
+
+        invoice.paying_entity_raw = str(paying_entity or "")
+
+        # Invoice number
         invoice.invoice_number = str(fields.get("invoice_number") or "")
 
-        # Handle dates safely
+        # Dates
         invoice_date = fields.get("invoice_date")
         if invoice_date:
             try:
@@ -174,7 +210,7 @@ def trigger_extraction(invoice_id: int, db: Session = Depends(get_db)):
             except (ValueError, TypeError, AttributeError):
                 pass
 
-        # Use Decimal for money fields
+        # Amounts — Decimal for finance safety
         def parse_amount(val):
             if val is None:
                 return None
@@ -188,12 +224,13 @@ def trigger_extraction(invoice_id: int, db: Session = Depends(get_db)):
         invoice.vat_amount = parse_amount(fields.get("vat_amount"))
         invoice.net_amount = parse_amount(fields.get("net_amount"))
 
-        # Only auto-accept if key fields extracted successfully
-        key_fields_present = all([
-            invoice.supplier_name_raw,
-            invoice.invoice_number,
-            invoice.gross_amount
-        ])
+        # Auto-accept only if key fields present
+        # Note: check is not None for gross_amount to handle Decimal("0")
+        key_fields_present = (
+            bool(invoice.supplier_name_raw)
+            and bool(invoice.invoice_number)
+            and invoice.gross_amount is not None
+        )
         invoice.review_status = "auto_accepted" if key_fields_present else "needs_review"
         invoice.ocr_status = "completed"
         invoice.extraction_status = "completed"
@@ -205,6 +242,8 @@ def trigger_extraction(invoice_id: int, db: Session = Depends(get_db)):
             "invoice_id": invoice_id,
             "status": "extraction_complete",
             "review_status": invoice.review_status,
+            "entity_source": entity_source,
+            "entity_confidence": entity_confidence,
             "extracted_fields": fields,
             "confidence_scores": confidence,
             "line_items": result["line_items"]
