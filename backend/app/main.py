@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import app.models.models  # noqa: F401
 
 # Import routers
-from app.api import invoices, projects, entities, dashboard
+from app.api import invoices, projects, entities, dashboard, mapping
 
 app = FastAPI(
     title="Invoice Tracker API",
@@ -29,6 +29,7 @@ app.include_router(invoices.router)
 app.include_router(projects.router)
 app.include_router(entities.router)
 app.include_router(dashboard.router)
+app.include_router(mapping.router)
 
 @app.get("/")
 def root():
