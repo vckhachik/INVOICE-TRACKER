@@ -7,7 +7,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.models.models import FxRate
+from app.models.models import FxRate, User
+from app.core.deps import current_user
+from app.core.permissions import require_permission, Permission
 
 router = APIRouter(prefix="/fx", tags=["fx"])
 
@@ -42,7 +44,7 @@ class FxRateOut(BaseModel):
 
 
 @router.get("/rates", response_model=List[FxRateOut])
-def get_rates(db: Session = Depends(get_db)):
+def get_rates(db: Session = Depends(get_db), actor: User = Depends(current_user)):
     rates = []
     for currency in SUPPORTED_CURRENCIES:
         if currency == "GBP":
@@ -62,7 +64,7 @@ def get_rates(db: Session = Depends(get_db)):
 
 
 @router.post("/rates", response_model=FxRateOut)
-def set_rate(body: FxRateIn, db: Session = Depends(get_db)):
+def set_rate(body: FxRateIn, db: Session = Depends(get_db), actor: User = Depends(require_permission(Permission.SYSTEM_SETTINGS))):
     currency = body.from_currency.upper().strip()
 
     if currency not in SUPPORTED_CURRENCIES or currency == "GBP":

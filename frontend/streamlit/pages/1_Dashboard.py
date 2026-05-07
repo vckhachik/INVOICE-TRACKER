@@ -265,8 +265,8 @@ def build_entity_rows(invoices, entity_map):
 all_invoices = get("/invoices/?limit=10000&offset=0") or []
 projects = get("/projects/") or []
 entities = get("/entities/") or []
-activity = get("/dashboard/activity") or []
-fx_rates = get("/fx/rates") or []
+activity = get("/dashboard/activity/") or []
+fx_rates = get("/fx/rates/") or []
 
 if not fx_rates:
     st.warning(

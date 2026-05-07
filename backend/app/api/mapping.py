@@ -3,7 +3,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.db.database import get_db
-from app.models.models import MappingRule, Entity, Project, Invoice
+from app.models.models import MappingRule, Entity, Project, Invoice, User
+from app.core.deps import current_user
+from app.core.permissions import require_permission, Permission
 from app.services.mapping import (
     apply_mapping_to_invoice,
     save_mapping_rule,
@@ -31,7 +33,7 @@ def serialise_match_result(raw_text: str, result: dict) -> dict:
 
 
 @router.post("/invoices/{invoice_id}/map")
-def map_invoice(invoice_id: int, db: Session = Depends(get_db)):
+def map_invoice(invoice_id: int, db: Session = Depends(get_db), actor: User = Depends(require_permission(Permission.EDIT_INVOICE))):
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -51,6 +53,7 @@ def create_mapping_rule(
     project_id: Optional[int] = None,
     priority: int = 0,
     db: Session = Depends(get_db),
+    actor: User = Depends(require_permission(Permission.MANAGE_MAPPINGS)),
 ):
     entity = db.query(Entity).filter(Entity.id == entity_id).first()
     if not entity:
@@ -73,7 +76,7 @@ def create_mapping_rule(
 
 
 @router.get("/rules")
-def get_mapping_rules(db: Session = Depends(get_db)):
+def get_mapping_rules(db: Session = Depends(get_db), actor: User = Depends(current_user)):
     rules = (
         db.query(MappingRule)
         .filter(MappingRule.active.is_(True))
@@ -84,7 +87,7 @@ def get_mapping_rules(db: Session = Depends(get_db)):
 
 
 @router.delete("/rules/{rule_id}")
-def delete_mapping_rule(rule_id: int, db: Session = Depends(get_db)):
+def delete_mapping_rule(rule_id: int, db: Session = Depends(get_db), actor: User = Depends(require_permission(Permission.MANAGE_MAPPINGS))):
     rule = db.query(MappingRule).filter(MappingRule.id == rule_id).first()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
@@ -95,6 +98,6 @@ def delete_mapping_rule(rule_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/match-test")
-def test_match(raw_text: str, db: Session = Depends(get_db)):
+def test_match(raw_text: str, db: Session = Depends(get_db), actor: User = Depends(current_user)):
     result = find_entity_match(raw_text, db)
     return serialise_match_result(raw_text, result)

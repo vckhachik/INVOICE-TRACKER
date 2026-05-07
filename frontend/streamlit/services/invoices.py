@@ -27,7 +27,10 @@ def fetch_invoices(
     params.append(f"offset={offset}")
 
     query = "?" + "&".join(params) if params else ""
-    return get(f"/invoices/{query}")
+    path = f"/invoices/{query}"
+    if path == "/invoices":
+        path = "/invoices/"
+    return get(path)
 
 
 def fetch_invoice(invoice_id: int):

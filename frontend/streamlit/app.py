@@ -15,7 +15,7 @@ st.caption("Internal invoice intake, extraction, mapping, and tracking")
 st.markdown("---")
 
 # Simple backend health check
-api_ok = get("/invoices") is not None
+api_ok = get("/invoices/") is not None
 
 if api_ok:
     st.success(f"Backend connected: {API_BASE_URL}")

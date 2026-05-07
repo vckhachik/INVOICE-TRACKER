@@ -3,14 +3,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 
 from app.db.database import get_db
-from app.models.models import Invoice, Project, Entity
-from app.models.models import InvoiceActivityLog
+from app.models.models import Invoice, Project, Entity, InvoiceActivityLog, User
+from app.core.deps import current_user
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
 @router.get("/summary")
-def get_summary(db: Session = Depends(get_db)):
+def get_summary(db: Session = Depends(get_db), actor: User = Depends(current_user)):
     aggregates = db.query(
         func.count(Invoice.id).label("total_invoices"),
         func.sum(case((Invoice.is_paid == True, Invoice.gross_amount), else_=0)).label("paid_total"),
@@ -29,7 +29,7 @@ def get_summary(db: Session = Depends(get_db)):
 
 
 @router.get("/by-project")
-def get_by_project(db: Session = Depends(get_db)):
+def get_by_project(db: Session = Depends(get_db), actor: User = Depends(current_user)):
     project_rows = db.query(
         Project.id.label("project_id"),
         Project.name.label("project_name"),
@@ -108,7 +108,7 @@ def get_by_project(db: Session = Depends(get_db)):
 
 
 @router.get("/by-entity")
-def get_by_entity(db: Session = Depends(get_db)):
+def get_by_entity(db: Session = Depends(get_db), actor: User = Depends(current_user)):
     results = db.query(
         Entity.id.label("entity_id"),
         Entity.name.label("entity_name"),
@@ -159,7 +159,7 @@ def get_by_entity(db: Session = Depends(get_db)):
     return response
 
 @router.get("/activity")
-def get_activity(limit: int = 20, db: Session = Depends(get_db)):
+def get_activity(limit: int = 20, db: Session = Depends(get_db), actor: User = Depends(current_user)):
     logs = (
         db.query(InvoiceActivityLog)
         .order_by(InvoiceActivityLog.created_at.desc())
