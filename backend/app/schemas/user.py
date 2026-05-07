@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
+from typing import Optional
 
 
 class InviteUserRequest(BaseModel):
@@ -9,8 +10,8 @@ class InviteUserRequest(BaseModel):
 
 
 class UpdateUserRequest(BaseModel):
-    full_name: str = Field(default=None, min_length=1, max_length=255)
-    role: str = Field(default=None, pattern="^(partner|finance)$")
+    full_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    role: Optional[str] = Field(default=None, pattern="^(partner|finance)$")
 
 
 class UserListItem(BaseModel):
@@ -19,7 +20,7 @@ class UserListItem(BaseModel):
     full_name: str
     role: str
     is_active: bool
-    last_login_at: datetime = None
+    last_login_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:

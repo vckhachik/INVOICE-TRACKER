@@ -161,7 +161,8 @@ def get_by_entity(db: Session = Depends(get_db), actor: User = Depends(current_u
 @router.get("/activity")
 def get_activity(limit: int = 20, db: Session = Depends(get_db), actor: User = Depends(current_user)):
     logs = (
-        db.query(InvoiceActivityLog)
+        db.query(InvoiceActivityLog, User.full_name.label("actor_name"))
+        .outerjoin(User, InvoiceActivityLog.changed_by == User.id)
         .order_by(InvoiceActivityLog.created_at.desc())
         .limit(limit)
         .all()
@@ -169,16 +170,17 @@ def get_activity(limit: int = 20, db: Session = Depends(get_db), actor: User = D
 
     return [
         {
-            "id": log.id,
-            "invoice_id": log.invoice_id,
-            "event_type": log.event_type,
-            "event_label": log.event_label,
-            "changed_by": log.changed_by,
-            "old_values": log.old_values,
-            "new_values": log.new_values,
-            "project_id": log.project_id,
-            "entity_id": log.entity_id,
-            "created_at": log.created_at.isoformat() if log.created_at else None,
+            "id": log.InvoiceActivityLog.id,
+            "invoice_id": log.InvoiceActivityLog.invoice_id,
+            "event_type": log.InvoiceActivityLog.event_type,
+            "event_label": log.InvoiceActivityLog.event_label,
+            "changed_by": log.InvoiceActivityLog.changed_by,
+            "actor_name": log.actor_name or "System",
+            "old_values": log.InvoiceActivityLog.old_values,
+            "new_values": log.InvoiceActivityLog.new_values,
+            "project_id": log.InvoiceActivityLog.project_id,
+            "entity_id": log.InvoiceActivityLog.entity_id,
+            "created_at": log.InvoiceActivityLog.created_at.isoformat() if log.InvoiceActivityLog.created_at else None,
         }
         for log in logs
     ]

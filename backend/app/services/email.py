@@ -8,7 +8,7 @@ ENV = os.getenv("ENV", "development")
 
 
 def _set_password_link(raw_token: str) -> str:
-    return f"{APP_BASE_URL}/set-password?token={raw_token}"
+    return f"{APP_BASE_URL}/Set_Password?token={raw_token}"
 
 
 def send_invite_email(email: str, full_name: str, raw_token: str) -> None:

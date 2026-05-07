@@ -5,6 +5,9 @@ from pathlib import Path
 
 from services.api import get
 from utils.formatting import format_currency, CURRENCY_SYMBOLS
+from utils.auth import require_login
+
+require_login()
 
 st.set_page_config(page_title="Dashboard", page_icon="📊", layout="wide")
 # ----------------------------
@@ -673,6 +676,7 @@ if activity:
         activity_rows.append(
             {
                 "When": item.get("created_at", ""),
+                "User": item.get("actor_name", "—"),
                 "Event": item.get("event_label", ""),
                 "Invoice ID": item.get("invoice_id", ""),
                 "Project": project_map.get(

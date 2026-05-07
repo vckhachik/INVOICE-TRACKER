@@ -2,6 +2,9 @@ import streamlit as st
 
 from services.api import get
 from services.mapping import fetch_mapping_rules, test_match, create_mapping_rule
+from utils.auth import require_login
+
+require_login()
 
 st.set_page_config(page_title="Mapping", page_icon="🧠", layout="wide")
 st.title("🧠 Mapping")

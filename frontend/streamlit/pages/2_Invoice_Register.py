@@ -11,6 +11,9 @@ from utils.formatting import (
     format_status,
     format_review_status,
 )
+from utils.auth import require_login, can
+
+require_login()
 
 st.set_page_config(page_title="Invoice Register", page_icon="📋", layout="wide")
 st.title("📋 Invoice Register")
@@ -153,13 +156,25 @@ if selected:
         status_options = ["Keep current", "Set to Yes", "Set to No"]
 
         with col1:
-            paid_action = st.selectbox("Paid", status_options, index=0)
+            if can("toggle_paid"):
+                paid_action = st.selectbox("Paid", status_options, index=0)
+            else:
+                st.write("**Paid:** (No permission)")
+                paid_action = "Keep current"
 
         with col2:
-            approved_action = st.selectbox("Approved to Pay", status_options, index=0)
+            if can("approve_to_pay"):
+                approved_action = st.selectbox("Approved to Pay", status_options, index=0)
+            else:
+                st.write("**Approved to Pay:** (No permission)")
+                approved_action = "Keep current"
 
         with col3:
-            vat_action = st.selectbox("VAT Recovered", status_options, index=0)
+            if can("toggle_vat_recovered"):
+                vat_action = st.selectbox("VAT Recovered", status_options, index=0)
+            else:
+                st.write("**VAT Recovered:** (No permission)")
+                vat_action = "Keep current"
 
         submit_status = st.form_submit_button("💾 Save Status Changes")
 
@@ -192,7 +207,8 @@ if selected:
     st.markdown("### Manual Review, Edit, and Delete")
 
     if len(selected_invoices) == 1:
-        with st.expander("Open selected invoice for manual review / correction", expanded=False):
+        if can("edit_invoice"):
+            with st.expander("Open selected invoice for manual review / correction", expanded=False):
             edit_invoice_number = st.text_input(
                 "Invoice Number",
                 value=selected.get("invoice_number") or "",
@@ -280,26 +296,29 @@ if selected:
         st.info("Manual editing is available only when exactly one invoice is selected.")
 
     if selected_invoices:
-        st.markdown("#### Delete Selected Invoice(s)")
-        confirm_delete_multiple = st.checkbox(
-            f"I confirm I want to delete {len(selected_invoices)} selected invoice(s)",
-            key="confirm_delete_multiple_invoices",
-        )
+        if can("delete_invoice"):
+            st.markdown("#### Delete Selected Invoice(s)")
+            confirm_delete_multiple = st.checkbox(
+                f"I confirm I want to delete {len(selected_invoices)} selected invoice(s)",
+                key="confirm_delete_multiple_invoices",
+            )
 
-        if st.button("🗑️ Delete Selected Invoice(s)", key="delete_multiple_invoices"):
-            if not confirm_delete_multiple:
-                st.warning("Please tick the confirmation box before deleting the invoice(s).")
-            else:
-                success_count = 0
+            if st.button("🗑️ Delete Selected Invoice(s)", key="delete_multiple_invoices"):
+                if not confirm_delete_multiple:
+                    st.warning("Please tick the confirmation box before deleting the invoice(s).")
+                else:
+                    success_count = 0
 
-                for invoice in selected_invoices:
-                    result = delete_invoice(invoice.get("id"))
-                    if result is not None:
-                        success_count += 1
+                    for invoice in selected_invoices:
+                        result = delete_invoice(invoice.get("id"))
+                        if result is not None:
+                            success_count += 1
 
-                if success_count:
-                    st.success(f"Deleted {success_count} invoice(s) successfully.")
-                    st.rerun()
+                    if success_count:
+                        st.success(f"Deleted {success_count} invoice(s) successfully.")
+                        st.rerun()
+        else:
+            st.info("Delete permission required to delete invoices.")
     else:
         st.info("Select at least one invoice to enable deletion.")
 
@@ -307,18 +326,21 @@ if selected:
     st.markdown("### Mapping")
 
     if len(selected_invoices) == 1:
-        if st.button("🗺️ Run Mapping", key=f"map_{selected.get('id')}"):
-            result = map_invoice(selected.get("id"))
-            if result:
-                entity_name = (result.get("entity") or {}).get("name", "Unknown")
-                project_name = (result.get("project") or {}).get("name", "Unknown")
-                match_type = result.get("match_type") or "-"
-                confidence = result.get("confidence") or "-"
+        if can("manage_mappings"):
+            if st.button("🗺️ Run Mapping", key=f"map_{selected.get('id')}"):
+                result = map_invoice(selected.get("id"))
+                if result:
+                    entity_name = (result.get("entity") or {}).get("name", "Unknown")
+                    project_name = (result.get("project") or {}).get("name", "Unknown")
+                    match_type = result.get("match_type") or "-"
+                    confidence = result.get("confidence") or "-"
 
-                st.success(
-                    f"Mapped entity: {entity_name} | Project: {project_name} | "
-                    f"Match type: {match_type} | Confidence: {confidence}"
-                )
-                st.rerun()
+                    st.success(
+                        f"Mapped entity: {entity_name} | Project: {project_name} | "
+                        f"Match type: {match_type} | Confidence: {confidence}"
+                    )
+                    st.rerun()
+        else:
+            st.info("Mapping permission required to run mapping.")
     else:
         st.info("Run Mapping is available only when exactly one invoice is selected.")

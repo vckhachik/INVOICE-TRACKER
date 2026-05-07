@@ -3,6 +3,9 @@ import streamlit as st
 from services.invoices import upload_invoices_batch, trigger_invoice_extraction
 from services.mapping import map_invoice
 from utils.formatting import format_review_status
+from utils.auth import require_login, can
+
+require_login()
 
 st.set_page_config(page_title="Upload Invoice", page_icon="📤", layout="wide")
 st.title("📤 Upload Invoices")
@@ -10,53 +13,57 @@ st.caption("Upload one or more invoices, then run extraction and mapping")
 
 st.markdown("---")
 
-if "uploaded_batch_results" not in st.session_state:
-    st.session_state["uploaded_batch_results"] = []
+if can("edit_invoice"):
+    if "uploaded_batch_results" not in st.session_state:
+        st.session_state["uploaded_batch_results"] = []
 
-if "batch_extraction_results" not in st.session_state:
-    st.session_state["batch_extraction_results"] = {}
+    if "batch_extraction_results" not in st.session_state:
+        st.session_state["batch_extraction_results"] = {}
 
-if "batch_mapping_results" not in st.session_state:
-    st.session_state["batch_mapping_results"] = {}
+    if "batch_mapping_results" not in st.session_state:
+        st.session_state["batch_mapping_results"] = {}
 
-uploaded_files = st.file_uploader(
-    "Choose invoice files",
-    type=["pdf", "png", "jpg", "jpeg"],
-    accept_multiple_files=True,
-    help="Supported formats: PDF, PNG, JPG, JPEG",
-)
+    uploaded_files = st.file_uploader(
+        "Choose invoice files",
+        type=["pdf", "png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        help="Supported formats: PDF, PNG, JPG, JPEG",
+    )
 
-if uploaded_files:
-    st.markdown(f"**{len(uploaded_files)} file(s) selected**")
+    if uploaded_files:
+        st.markdown(f"**{len(uploaded_files)} file(s) selected**")
 
-    for file in uploaded_files:
-        file_size_kb = file.size / 1024
-        st.write(
-            f"- {file.name} ({file_size_kb:.1f} KB, {file.type or 'unknown type'})"
-        )
+        for file in uploaded_files:
+            file_size_kb = file.size / 1024
+            st.write(
+                f"- {file.name} ({file_size_kb:.1f} KB, {file.type or 'unknown type'})"
+            )
 
-    if st.button("📤 Upload Invoices", type="primary"):
-        with st.spinner("Uploading invoices..."):
-            result = upload_invoices_batch(uploaded_files)
+        if st.button("📤 Upload Invoices", type="primary"):
+            with st.spinner("Uploading invoices..."):
+                result = upload_invoices_batch(uploaded_files)
 
-        if result:
-            st.session_state["uploaded_batch_results"] = result.get("uploaded", [])
-            st.session_state["batch_extraction_results"] = {}
-            st.session_state["batch_mapping_results"] = {}
+            if result:
+                st.session_state["uploaded_batch_results"] = result.get("uploaded", [])
+                st.session_state["batch_extraction_results"] = {}
+                st.session_state["batch_mapping_results"] = {}
 
-            uploaded_count = result.get("uploaded_count", 0)
-            failed_count = result.get("failed_count", 0)
+                uploaded_count = result.get("uploaded_count", 0)
+                failed_count = result.get("failed_count", 0)
 
-            if uploaded_count:
-                st.success(f"{uploaded_count} invoice(s) uploaded successfully.")
+                if uploaded_count:
+                    st.success(f"{uploaded_count} invoice(s) uploaded successfully.")
 
-            if failed_count:
-                st.warning(f"{failed_count} file(s) failed to upload.")
+                if failed_count:
+                    st.warning(f"{failed_count} file(s) failed to upload.")
 
-            failed = result.get("failed", [])
-            if failed:
-                with st.expander("Failed uploads"):
-                    st.json(failed)
+                failed = result.get("failed", [])
+                if failed:
+                    with st.expander("Failed uploads"):
+                        st.json(failed)
+
+else:
+    st.error("Upload permission required to upload invoices.")
 
 uploaded_results = st.session_state.get("uploaded_batch_results", [])
 extraction_results = st.session_state.get("batch_extraction_results", {})

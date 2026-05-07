@@ -39,6 +39,24 @@ with st.form("login_form"):
                     data = response.json()
                     st.session_state["session_token"] = data["session_token"]
                     st.session_state["user"] = data["user"]
+                    
+                    # Fetch user permissions
+                    try:
+                        me_response = requests.get(
+                            f"{API_BASE_URL}/auth/me",
+                            headers={"Authorization": f"Bearer {data['session_token']}"},
+                            timeout=10
+                        )
+                        if me_response.status_code == 200:
+                            me_data = me_response.json()
+                            st.session_state["permissions"] = me_data.get("permissions", [])
+                        else:
+                            st.warning("Could not load user permissions. Some features may be limited.")
+                            st.session_state["permissions"] = []
+                    except Exception:
+                        st.warning("Could not load user permissions. Some features may be limited.")
+                        st.session_state["permissions"] = []
+                    
                     st.success("Login successful! Redirecting...")
                     st.switch_page("app.py")
                 else:
