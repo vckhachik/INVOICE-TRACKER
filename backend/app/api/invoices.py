@@ -12,7 +12,7 @@ from app.db.database import get_db
 from app.core.deps import current_user
 from app.core.permissions import require_permission, has_permission, Permission
 from app.models.models import Invoice, InvoiceFile, InvoiceActivityLog, User
-from app.schemas.invoice import InvoiceResponse, InvoiceStatusUpdate
+from app.schemas.invoice import InvoiceResponse, InvoiceStatusUpdate, ManualInvoiceCreate
 from app.services.activity import log_invoice_activity
 from app.services.entity_extraction import extract_entity_from_text
 from app.services.extraction import extract_invoice
@@ -723,4 +723,72 @@ def trigger_extraction(
             db.commit()
 
         raise HTTPException(status_code=500, detail="Extraction failed")
+
+
+@router.post("/manual", response_model=InvoiceResponse)
+def create_manual_invoice(
+    invoice_data: ManualInvoiceCreate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_permission(Permission.EDIT_INVOICE)),
+):
+    try:
+        # Auto-calculate net_amount if not provided and vat_amount is provided
+        net_amount = invoice_data.net_amount
+        if net_amount is None and invoice_data.vat_amount is not None:
+            net_amount = invoice_data.gross_amount - invoice_data.vat_amount
+
+        invoice = Invoice(
+            file_id=None,
+            supplier_name_raw=invoice_data.supplier_name_raw,
+            paying_entity_raw=invoice_data.paying_entity_raw,
+            paying_entity_id=invoice_data.paying_entity_id,
+            project_id=invoice_data.project_id,
+            invoice_number=invoice_data.invoice_number,
+            invoice_date=invoice_data.invoice_date,
+            due_date=invoice_data.due_date,
+            description=invoice_data.description,
+            gross_amount=invoice_data.gross_amount,
+            vat_amount=invoice_data.vat_amount,
+            net_amount=net_amount,
+            currency=invoice_data.currency,
+            ocr_status="manual",
+            extraction_status="manual",
+            review_status="auto_accepted",
+            is_legacy=False,
+        )
+        db.add(invoice)
+        db.flush()
+
+        log_invoice_activity(
+            db=db,
+            event_type="invoice_created_manual",
+            event_label="Invoice created manually",
+            invoice_id=invoice.id,
+            project_id=invoice.project_id,
+            entity_id=invoice.paying_entity_id,
+            changed_by=actor.id,
+            new_values={
+                "supplier_name_raw": invoice_data.supplier_name_raw,
+                "invoice_number": invoice_data.invoice_number,
+                "gross_amount": str(invoice_data.gross_amount),
+                "invoice_date": invoice_data.invoice_date.isoformat(),
+                "paying_entity_raw": invoice_data.paying_entity_raw,
+                "paying_entity_id": invoice_data.paying_entity_id,
+                "project_id": invoice_data.project_id,
+                "vat_amount": str(invoice_data.vat_amount) if invoice_data.vat_amount is not None else None,
+                "net_amount": str(net_amount) if net_amount is not None else None,
+                "due_date": invoice_data.due_date.isoformat() if invoice_data.due_date else None,
+                "description": invoice_data.description,
+                "currency": invoice_data.currency,
+            },
+        )
+
+        db.commit()
+        db.refresh(invoice)
+
+        return invoice
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create manual invoice: {str(e)}")
     

@@ -2,6 +2,7 @@ import requests
 import streamlit as st
 from typing import Any
 from config import API_BASE_URL
+from utils.auth import clear_session_cookie
 
 
 TIMEOUT = 10
@@ -21,6 +22,8 @@ def _handle_response(response):
         # Clear session and redirect to login
         st.session_state.pop("session_token", None)
         st.session_state.pop("user", None)
+        st.session_state.pop("permissions", None)
+        clear_session_cookie()
         st.switch_page("pages/0_Login.py")
         return None
     response.raise_for_status()

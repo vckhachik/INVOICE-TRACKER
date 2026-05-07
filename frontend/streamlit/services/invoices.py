@@ -95,3 +95,7 @@ def get_invoice_file_url(invoice_id: int):
     from config import API_BASE_URL
     return f"{API_BASE_URL}/invoices/{invoice_id}/file"
 
+
+def create_manual_invoice(payload: dict):
+    return post("/invoices/manual", payload)
+

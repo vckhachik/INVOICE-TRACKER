@@ -1,8 +1,10 @@
 import requests
 import streamlit as st
 from config import API_BASE_URL
+from utils.auth import restore_session_from_cookie, set_session_cookie, clear_session_cookie
 
 st.set_page_config(page_title="Login", page_icon="🔐", layout="centered")
+restore_session_from_cookie()
 
 # Check if already logged in
 if "session_token" in st.session_state:
@@ -11,6 +13,7 @@ if "session_token" in st.session_state:
 
     if st.button("Logout"):
         st.session_state.clear()
+        clear_session_cookie()
         st.rerun()
 
     st.stop()
@@ -40,6 +43,9 @@ with st.form("login_form"):
                     st.session_state["session_token"] = data["session_token"]
                     st.session_state["user"] = data["user"]
                     
+                    # Persist the session token in a browser session cookie.
+                    set_session_cookie(data["session_token"])
+
                     # Fetch user permissions
                     try:
                         me_response = requests.get(
