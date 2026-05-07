@@ -25,7 +25,9 @@ class InvoiceResponse(BaseModel):
     is_paid: bool = False
     is_vat_recovered: bool = False
     is_approved_to_pay: bool = False
+    is_legacy: bool
     created_at: datetime
+    
 
     class Config:
         from_attributes = True
@@ -35,3 +37,4 @@ class InvoiceStatusUpdate(BaseModel):
     is_paid: Optional[bool] = None
     is_approved_to_pay: Optional[bool] = None
     is_vat_recovered: Optional[bool] = None
+    is_legacy: Optional[bool] = None
