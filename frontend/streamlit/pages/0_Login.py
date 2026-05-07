@@ -6,6 +6,12 @@ from utils.auth import restore_session_from_cookie, set_session_cookie, clear_se
 st.set_page_config(page_title="Login", page_icon="🔐", layout="centered")
 restore_session_from_cookie()
 
+# If we just logged in on a previous render, write the cookie now (before any cookie-reading widget is instantiated)
+if "_pending_cookie_write" in st.session_state:
+    set_session_cookie(st.session_state["_pending_cookie_write"])
+    del st.session_state["_pending_cookie_write"]
+    st.switch_page("app.py")
+
 # Check if already logged in
 if "session_token" in st.session_state:
     st.success("You are already logged in!")
@@ -40,31 +46,29 @@ with st.form("login_form"):
 
                 if response.status_code == 200:
                     data = response.json()
-                    st.session_state["session_token"] = data["session_token"]
-                    st.session_state["user"] = data["user"]
-                    
-                    # Persist the session token in a browser session cookie.
-                    set_session_cookie(data["session_token"])
+                    token = data["session_token"]
 
-                    # Fetch user permissions
+                    # Fetch permissions BEFORE writing anything to session_state or cookie
+                    permissions = []
                     try:
                         me_response = requests.get(
                             f"{API_BASE_URL}/auth/me",
-                            headers={"Authorization": f"Bearer {data['session_token']}"},
+                            headers={"Authorization": f"Bearer {token}"},
                             timeout=10
                         )
                         if me_response.status_code == 200:
-                            me_data = me_response.json()
-                            st.session_state["permissions"] = me_data.get("permissions", [])
-                        else:
-                            st.warning("Could not load user permissions. Some features may be limited.")
-                            st.session_state["permissions"] = []
+                            permissions = me_response.json().get("permissions", [])
                     except Exception:
-                        st.warning("Could not load user permissions. Some features may be limited.")
-                        st.session_state["permissions"] = []
-                    
-                    st.success("Login successful! Redirecting...")
-                    st.switch_page("app.py")
+                        pass
+
+                    # Stage everything in session_state
+                    st.session_state["session_token"] = token
+                    st.session_state["user"] = data["user"]
+                    st.session_state["permissions"] = permissions
+                    st.session_state["_pending_cookie_write"] = token
+
+                    # Rerun — the cookie will be written on the next render BEFORE any read happens
+                    st.rerun()
                 else:
                     error_data = response.json()
                     st.error(f"Login failed: {error_data.get('detail', 'Unknown error')}")

@@ -209,89 +209,89 @@ if selected:
     if len(selected_invoices) == 1:
         if can("edit_invoice"):
             with st.expander("Open selected invoice for manual review / correction", expanded=False):
-            edit_invoice_number = st.text_input(
-                "Invoice Number",
-                value=selected.get("invoice_number") or "",
-            )
-            edit_supplier = st.text_input(
-                "Supplier",
-                value=selected.get("supplier_name_raw") or "",
-            )
-            edit_entity = st.text_input(
-                "Entity",
-                value=selected.get("paying_entity_raw") or "",
-            )
-            edit_entity_id = st.text_input(
-                "Entity ID",
-                value=str(selected.get("paying_entity_id") or ""),
-            )
-            edit_project_id = st.text_input(
-                "Project ID",
-                value=str(selected.get("project_id") or ""),
-            )
-
-            date_col1, date_col2 = st.columns(2)
-            with date_col1:
-                edit_invoice_date = st.text_input(
-                    "Invoice Date (YYYY-MM-DD)",
-                    value=str(selected.get("invoice_date") or ""),
+                edit_invoice_number = st.text_input(
+                    "Invoice Number",
+                    value=selected.get("invoice_number") or "",
                 )
-            with date_col2:
-                edit_due_date = st.text_input(
-                    "Due Date (YYYY-MM-DD)",
-                    value=str(selected.get("due_date") or ""),
+                edit_supplier = st.text_input(
+                    "Supplier",
+                    value=selected.get("supplier_name_raw") or "",
+                )
+                edit_entity = st.text_input(
+                    "Entity",
+                    value=selected.get("paying_entity_raw") or "",
+                )
+                edit_entity_id = st.text_input(
+                    "Entity ID",
+                    value=str(selected.get("paying_entity_id") or ""),
+                )
+                edit_project_id = st.text_input(
+                    "Project ID",
+                    value=str(selected.get("project_id") or ""),
                 )
 
-            st.caption("Amounts accept formats like 88900, 88,900, or £88,900")
-            amount_col1, amount_col2, amount_col3 = st.columns(3)
-            with amount_col1:
-                edit_gross_amount = st.text_input(
-                    "Gross Amount",
-                    value=str(selected.get("gross_amount") or ""),
+                date_col1, date_col2 = st.columns(2)
+                with date_col1:
+                    edit_invoice_date = st.text_input(
+                        "Invoice Date (YYYY-MM-DD)",
+                        value=str(selected.get("invoice_date") or ""),
+                    )
+                with date_col2:
+                    edit_due_date = st.text_input(
+                        "Due Date (YYYY-MM-DD)",
+                        value=str(selected.get("due_date") or ""),
+                    )
+
+                st.caption("Amounts accept formats like 88900, 88,900, or £88,900")
+                amount_col1, amount_col2, amount_col3 = st.columns(3)
+                with amount_col1:
+                    edit_gross_amount = st.text_input(
+                        "Gross Amount",
+                        value=str(selected.get("gross_amount") or ""),
+                    )
+                with amount_col2:
+                    edit_vat_amount = st.text_input(
+                        "VAT Amount",
+                        value=str(selected.get("vat_amount") or ""),
+                    )
+                with amount_col3:
+                    edit_net_amount = st.text_input(
+                        "Net Amount",
+                        value=str(selected.get("net_amount") or ""),
+                    )
+
+                # Selectbox prevents invalid enum values reaching the backend
+                REVIEW_STATUS_OPTIONS = ["pending", "needs_review", "auto_accepted", "failed"]
+                current_review_status = selected.get("review_status") or "pending"
+                review_status_index = (
+                    REVIEW_STATUS_OPTIONS.index(current_review_status)
+                    if current_review_status in REVIEW_STATUS_OPTIONS
+                    else 0
                 )
-            with amount_col2:
-                edit_vat_amount = st.text_input(
-                    "VAT Amount",
-                    value=str(selected.get("vat_amount") or ""),
-                )
-            with amount_col3:
-                edit_net_amount = st.text_input(
-                    "Net Amount",
-                    value=str(selected.get("net_amount") or ""),
+                edit_review_status = st.selectbox(
+                    "Review Status",
+                    REVIEW_STATUS_OPTIONS,
+                    index=review_status_index,
                 )
 
-            # Selectbox prevents invalid enum values reaching the backend
-            REVIEW_STATUS_OPTIONS = ["pending", "needs_review", "auto_accepted", "failed"]
-            current_review_status = selected.get("review_status") or "pending"
-            review_status_index = (
-                REVIEW_STATUS_OPTIONS.index(current_review_status)
-                if current_review_status in REVIEW_STATUS_OPTIONS
-                else 0
-            )
-            edit_review_status = st.selectbox(
-                "Review Status",
-                REVIEW_STATUS_OPTIONS,
-                index=review_status_index,
-            )
-
-            if st.button("💾 Save Manual Changes", key=f"save_edit_{selected.get('id')}"):
-                payload = {
-                    "invoice_number": edit_invoice_number or None,
-                    "supplier_name_raw": edit_supplier or None,
-                    "paying_entity_raw": edit_entity or None,
-                    "paying_entity_id": int(edit_entity_id) if str(edit_entity_id).strip().isdigit() else None,
-                    "project_id": int(edit_project_id) if str(edit_project_id).strip().isdigit() else None,
-                    "invoice_date": edit_invoice_date or None,
-                    "due_date": edit_due_date or None,
-                    "gross_amount": edit_gross_amount or None,
-                    "vat_amount": edit_vat_amount or None,
-                    "net_amount": edit_net_amount or None,
-                    "review_status": edit_review_status,
-                }
-                result = update_invoice(selected.get("id"), payload)
-                if result:
-                    st.success("Invoice updated successfully.")
-                    st.rerun()
+                if st.button("💾 Save Manual Changes", key=f"save_edit_{selected.get('id')}"):
+                    payload = {
+                        "invoice_number": edit_invoice_number or None,
+                        "supplier_name_raw": edit_supplier or None,
+                        "paying_entity_raw": edit_entity or None,
+                        "paying_entity_id": int(edit_entity_id) if str(edit_entity_id).strip().isdigit() else None,
+                        "project_id": int(edit_project_id) if str(edit_project_id).strip().isdigit() else None,
+                        "invoice_date": edit_invoice_date or None,
+                        "due_date": edit_due_date or None,
+                        "gross_amount": edit_gross_amount or None,
+                        "vat_amount": edit_vat_amount or None,
+                        "net_amount": edit_net_amount or None,
+                        "review_status": edit_review_status,
+                    }
+                    result = update_invoice(selected.get("id"), payload)
+                    if result:
+                        st.success("Invoice updated successfully.")
+                        st.rerun()
     elif len(selected_invoices) > 1:
         st.info("Manual editing is available only when exactly one invoice is selected.")
 

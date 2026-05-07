@@ -6,51 +6,35 @@ from config import API_BASE_URL
 SESSION_COOKIE_NAME = "invoice_session_token"
 
 
-def _cookie_options(
-    self,
-    path: str = '/',
-    expires=None,
-    max_age=None,
-    domain=None,
-    secure=None,
-    same_site='strict',
-    partitioned=None,
-):
-    options = {
-        "path": path,
-        "maxAge": max_age,
-        "domain": domain,
-        "secure": secure,
-        "sameSite": same_site,
-        "partitioned": partitioned,
-    }
-    return {k: v for k, v in options.items() if v is not None}
-
-
-CookieController._CookieController__getOptions = _cookie_options
-
-
 def _cookie_manager():
     return CookieController()
 
 
 def set_session_cookie(token: str):
-    cookie_controller = _cookie_manager()
-    cookie_controller.set(SESSION_COOKIE_NAME, token, path="/")
+    cm = _cookie_manager()
+    cm.set(SESSION_COOKIE_NAME, token, path="/")
 
 
 def clear_session_cookie():
-    cookie_controller = _cookie_manager()
-    cookie_controller.remove(SESSION_COOKIE_NAME, path="/")
+    cm = _cookie_manager()
+    cm.remove(SESSION_COOKIE_NAME, path="/")
 
 
 def restore_session_from_cookie():
     if "session_token" in st.session_state:
         return
 
-    cookie_controller = _cookie_manager()
-    cookie_controller.refresh()
-    token = cookie_controller.get(SESSION_COOKIE_NAME)
+    cm = _cookie_manager()
+    try:
+        cm.refresh()
+    except Exception:
+        return
+
+    try:
+        token = cm.get(SESSION_COOKIE_NAME)
+    except (KeyError, Exception):
+        return
+
     if not token:
         return
 
