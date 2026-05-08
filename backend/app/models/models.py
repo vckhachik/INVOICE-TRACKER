@@ -234,3 +234,39 @@ class FxRate(Base):
     effective_date = Column(Date, nullable=False)
     source = Column(String(50), default="manual")
     created_at = Column(DateTime, server_default=func.now())
+
+
+class CreditNote(Base):
+    __tablename__ = "credit_notes"
+
+    id = Column(Integer, primary_key=True)
+    file_id = Column(Integer, ForeignKey("invoice_files.id"))
+    supplier_name_raw = Column(String)
+    paying_entity_raw = Column(String)
+    paying_entity_id = Column(Integer, ForeignKey("entities.id"))
+    project_id = Column(Integer, ForeignKey("projects.id"))
+    credit_number = Column(String)
+    credit_date = Column(Date)
+    gross_amount = Column(Numeric(12, 2))
+    vat_amount = Column(Numeric(12, 2))
+    net_amount = Column(Numeric(12, 2))
+    currency = Column(String, default="GBP")
+    ocr_status = Column(String, default="pending")
+    extraction_status = Column(String, default="pending")
+    review_status = Column(String, default="pending")
+    is_approved_to_pay = Column(Boolean, default=False)
+    is_paid = Column(Boolean, default=False)
+    is_legacy = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+
+class CreditNoteLink(Base):
+    __tablename__ = "credit_note_links"
+
+    id = Column(Integer, primary_key=True)
+    credit_note_id = Column(Integer, ForeignKey("credit_notes.id", ondelete="CASCADE"), nullable=False)
+    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=True)
+    allocated_amount = Column(Numeric(12, 2), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"))
