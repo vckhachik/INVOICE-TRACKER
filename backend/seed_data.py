@@ -31,6 +31,8 @@ SEED_DATA = [
         "entities": [
             "VC TKY LIMITED",
             "3KY MAYFAIR LIMITED",
+            "17 AND 18 THREE YARD LIMITED",
+            "17 & 18 THREE YARD LIMITED",
         ],
     },
     {
@@ -50,6 +52,8 @@ SEED_DATA = [
             "Asset 401 Capel Limited",
             "Asset Resi Limited",
             "Asset Resi 2 Limited",
+            "Asset Resi 3 Limited",
+            "Asset Resi 4 Limited",
         ],
     },
     {
@@ -62,13 +66,21 @@ SEED_DATA = [
     {
         "project": "Athens Aparthotel",
         "aliases": ["Athens"],
-        "entities": [],
+        "entities": [
+            "VCGP OPCO Single Member P.C.",
+            "Valpre Capital Athens S.A.",
+            "Valpre Capital Grea Properties 1 SMSA",
+            "Valpre Capital Investments SARL",
+            "INDIE Independent Asset Hotel Management Services Single Member P.C.",
+            "Vanity Group UK Limited",
+        ],
     },
     {
         "project": "10 Newmarket Square",
         "aliases": ["Newmarket", "NREK"],
         "entities": [
             "NREK 1 LIMITED",
+            "NREK1",
         ],
     },
     {

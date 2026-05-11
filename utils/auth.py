@@ -58,7 +58,6 @@ def restore_session_from_cookie():
 def require_login():
     restore_session_from_cookie()
     if "session_token" not in st.session_state:
-        st.switch_page("pages/0_Login.py")
         st.stop()
 
 

@@ -92,8 +92,10 @@ def delete_invoice(invoice_id: int):
     return delete(f"/invoices/{invoice_id}")
 
 def get_invoice_file_url(invoice_id: int):
+    import streamlit as st
     from config import API_BASE_URL
-    return f"{API_BASE_URL}/invoices/{invoice_id}/file"
+    token = st.session_state.get("session_token", "")
+    return f"{API_BASE_URL}/invoices/{invoice_id}/file?token={token}"
 
 
 def create_manual_invoice(payload: dict):

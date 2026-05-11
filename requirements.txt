@@ -40,3 +40,4 @@ urllib3==2.6.3
 uvicorn==0.39.0
 streamlit==1.50.0
 streamlit-cookies-controller==0.0.4
+pandas==2.2.3

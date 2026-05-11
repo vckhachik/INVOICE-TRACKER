@@ -19,12 +19,11 @@ def _get_headers():
 
 def _handle_response(response):
     if response.status_code == 401:
-        # Clear session and redirect to login
         st.session_state.pop("session_token", None)
         st.session_state.pop("user", None)
         st.session_state.pop("permissions", None)
         clear_session_cookie()
-        st.switch_page("pages/0_Login.py")
+        st.rerun()
         return None
     response.raise_for_status()
     return response.json()

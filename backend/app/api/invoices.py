@@ -791,4 +791,40 @@ def create_manual_invoice(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create manual invoice: {str(e)}")
+
+
+# ── Credit note links for an invoice ─────────────────────────────────────────
+
+@router.get("/{invoice_id}/credit-note-links")
+def get_invoice_credit_note_links(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(current_user),
+):
+    from app.models.models import CreditNote, CreditNoteLink
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    links = (
+        db.query(CreditNoteLink, CreditNote)
+        .join(CreditNote, CreditNote.id == CreditNoteLink.credit_note_id)
+        .filter(CreditNoteLink.invoice_id == invoice_id)
+        .all()
+    )
+
+    result = []
+    for link, cn in links:
+        result.append({
+            "link_id": link.id,
+            "credit_note_id": cn.id,
+            "credit_number": cn.credit_number,
+            "supplier_name_raw": cn.supplier_name_raw,
+            "gross_amount": str(cn.gross_amount) if cn.gross_amount is not None else None,
+            "allocated_amount": str(link.allocated_amount) if link.allocated_amount is not None else None,
+            "file_id": cn.file_id,
+            "is_paid": cn.is_paid,
+            "is_approved_to_pay": cn.is_approved_to_pay,
+        })
+    return result
     

@@ -21,7 +21,11 @@ def _extract_token(request: Request) -> str | None:
     token = request.cookies.get(COOKIE_NAME)
     if token:
         return token
-    # Fall back to Authorization header (for Streamlit)
+    # Try query param (used by direct browser file links from Streamlit)
+    token = request.query_params.get("token")
+    if token:
+        return token
+    # Fall back to Authorization header (for Streamlit API calls)
     auth = request.headers.get("Authorization", "")
     if auth.startswith(BEARER_PREFIX):
         return auth[len(BEARER_PREFIX):].strip() or None
