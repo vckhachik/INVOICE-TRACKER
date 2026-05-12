@@ -2,8 +2,6 @@ import requests
 import streamlit as st
 from typing import Any
 from config import API_BASE_URL
-from utils.auth import clear_session_cookie
-
 
 TIMEOUT = 10
 EXTRACTION_TIMEOUT = 120  # Azure OCR can take up to 2 minutes
@@ -19,15 +17,6 @@ def _get_headers():
 
 def _handle_response(response):
     if response.status_code == 401:
-        st.session_state.pop("session_token", None)
-        st.session_state.pop("user", None)
-        st.session_state.pop("permissions", None)
-        st.session_state["_logged_out"] = True
-        try:
-            clear_session_cookie()
-        except Exception:
-            pass
-        st.rerun()
         return None
     response.raise_for_status()
     return response.json()
