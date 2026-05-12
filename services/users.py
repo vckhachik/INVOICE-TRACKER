@@ -2,11 +2,11 @@ from .api import get, post, patch
 
 
 def fetch_users():
-    return get("/users/")
+    return get("/users")
 
 
 def invite_user(email: str, full_name: str, role: str):
-    return post("/users/", {"email": email, "full_name": full_name, "role": role})
+    return post("/users", {"email": email, "full_name": full_name, "role": role})
 
 
 def update_user(user_id: int, full_name: str = None, role: str = None):

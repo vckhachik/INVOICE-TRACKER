@@ -8,7 +8,7 @@ def map_invoice(invoice_id: int):
 
 
 def fetch_mapping_rules():
-    return get("/mapping/rules/")
+    return get("/mapping/rules")
 
 
 def test_match(raw_text: str):
