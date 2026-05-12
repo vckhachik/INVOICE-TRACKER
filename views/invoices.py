@@ -1,9 +1,13 @@
+import datetime
 import pandas as pd
 import streamlit as st
 
 from services.api import get
-from services.invoices import fetch_invoices, update_status, delete_invoice, update_invoice, get_invoice_file_url
-from services.mapping import map_invoice
+from services.invoices import (
+    fetch_invoices, update_status, delete_invoice, update_invoice,
+    get_invoice_file_url, upload_invoices_batch, trigger_invoice_extraction,
+)
+from services.mapping import map_invoice, fetch_mapping_rules, test_match, create_mapping_rule
 from services.credit_notes import delete_credit_note_link, create_credit_note_link, get_credit_note_file_url
 from utils.formatting import format_currency, format_date, format_status, format_review_status
 from utils.auth import can
@@ -11,9 +15,27 @@ from utils.auth import can
 
 def render_invoice_register():
     st.title("📋 Invoice Register")
-    st.caption("Browse, filter, review, and update invoices")
+    st.caption("Browse, upload, enter, and map invoices — all in one place")
     st.markdown("---")
 
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Register", "📤 Upload", "➕ Manual Entry", "🗺️ Mapping"])
+
+    with tab1:
+        _render_register()
+
+    with tab2:
+        _render_upload()
+
+    with tab3:
+        _render_manual_entry()
+
+    with tab4:
+        _render_mapping()
+
+
+# ── Tab 1: Register ────────────────────────────────────────────────────────────
+
+def _render_register():
     top_col1, top_col2 = st.columns([1, 5])
     with top_col1:
         if st.button("🔄 Refresh"):
@@ -21,7 +43,6 @@ def render_invoice_register():
     with top_col2:
         page_size = st.selectbox("Rows", [25, 50, 100], index=1)
 
-    # Reference data
     _projects = get("/projects/") or []
     _entities = get("/entities/") or []
     project_id_to_name = {p["id"]: p["name"] for p in _projects if p.get("id")}
@@ -209,14 +230,12 @@ def render_invoice_register():
             edit_supplier = st.text_input("Supplier", value=selected.get("supplier_name_raw") or "")
             edit_entity = st.text_input("Entity (raw text)", value=selected.get("paying_entity_raw") or "")
 
-            # Entity dropdown
             current_entity_id = selected.get("paying_entity_id")
             current_entity_name = entity_id_to_name.get(current_entity_id, "(unmapped)")
             entity_keys = list(entity_options.keys())
             entity_default = entity_keys.index(current_entity_name) if current_entity_name in entity_keys else 0
             edit_entity_select = st.selectbox("Link to Entity", options=entity_keys, index=entity_default)
 
-            # Project dropdown
             current_project_id = selected.get("project_id")
             current_project_name = project_id_to_name.get(current_project_id, "")
             project_keys = list(project_options.keys())
@@ -302,3 +321,376 @@ def render_invoice_register():
                 st.error(f"Mapping failed for invoice(s): {', '.join(f'#{i}' for i in failed)}")
             if results:
                 st.rerun()
+
+
+# ── Tab 2: Upload ──────────────────────────────────────────────────────────────
+
+def _render_upload():
+    st.subheader("Upload Invoices")
+    st.caption("Upload one or more invoices, then run extraction and mapping")
+
+    if can("edit_invoice"):
+        if "uploaded_batch_results" not in st.session_state:
+            st.session_state["uploaded_batch_results"] = []
+        if "batch_extraction_results" not in st.session_state:
+            st.session_state["batch_extraction_results"] = {}
+        if "batch_mapping_results" not in st.session_state:
+            st.session_state["batch_mapping_results"] = {}
+
+        uploaded_files = st.file_uploader(
+            "Choose invoice files",
+            type=["pdf", "png", "jpg", "jpeg"],
+            accept_multiple_files=True,
+            help="Supported formats: PDF, PNG, JPG, JPEG",
+        )
+
+        if uploaded_files:
+            st.markdown(f"**{len(uploaded_files)} file(s) selected**")
+            for file in uploaded_files:
+                st.write(f"- {file.name} ({file.size / 1024:.1f} KB, {file.type or 'unknown type'})")
+
+            if st.button("📤 Upload Invoices", type="primary"):
+                with st.spinner("Uploading invoices..."):
+                    result = upload_invoices_batch(uploaded_files)
+                if result:
+                    st.session_state["uploaded_batch_results"] = result.get("uploaded", [])
+                    st.session_state["batch_extraction_results"] = {}
+                    st.session_state["batch_mapping_results"] = {}
+                    uploaded_count = result.get("uploaded_count", 0)
+                    failed_count = result.get("failed_count", 0)
+                    if uploaded_count:
+                        st.success(f"{uploaded_count} invoice(s) uploaded successfully.")
+                    if failed_count:
+                        st.warning(f"{failed_count} file(s) failed to upload.")
+                    if result.get("failed"):
+                        with st.expander("Failed uploads"):
+                            st.json(result["failed"])
+    else:
+        st.error("Upload permission required to upload invoices.")
+
+    uploaded_results = st.session_state.get("uploaded_batch_results", [])
+    extraction_results = st.session_state.get("batch_extraction_results", {})
+    mapping_results = st.session_state.get("batch_mapping_results", {})
+
+    if not uploaded_results:
+        return
+
+    st.markdown("---")
+    st.subheader("Uploaded Invoices")
+    for item in uploaded_results:
+        st.write(f"**{item.get('file_name', '-')}** → Invoice ID: `{item.get('invoice_id', '-')}`")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("🔍 Run Extraction for All"):
+            success_count = 0
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            for idx, item in enumerate(uploaded_results, start=1):
+                invoice_id = item.get("invoice_id")
+                status_text.write(f"Extracting {idx} of {len(uploaded_results)}: {item.get('file_name', f'Invoice {invoice_id}')}")
+                result = trigger_invoice_extraction(invoice_id)
+                if result:
+                    extraction_results[invoice_id] = result
+                    success_count += 1
+                progress_bar.progress(idx / len(uploaded_results))
+            st.session_state["batch_extraction_results"] = extraction_results
+            st.success(f"Extraction completed for {success_count} invoice(s).")
+
+    with col2:
+        if st.button("🗺️ Run Mapping for All"):
+            success_count = 0
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            for idx, item in enumerate(uploaded_results, start=1):
+                invoice_id = item.get("invoice_id")
+                status_text.write(f"Mapping {idx} of {len(uploaded_results)}: {item.get('file_name', f'Invoice {invoice_id}')}")
+                result = map_invoice(invoice_id)
+                if result:
+                    mapping_results[invoice_id] = result
+                    success_count += 1
+                progress_bar.progress(idx / len(uploaded_results))
+            st.session_state["batch_mapping_results"] = mapping_results
+            st.success(f"Mapping completed for {success_count} invoice(s).")
+
+    with col3:
+        if st.button("🗑️ Clear Batch"):
+            st.session_state["uploaded_batch_results"] = []
+            st.session_state["batch_extraction_results"] = {}
+            st.session_state["batch_mapping_results"] = {}
+            st.rerun()
+
+    st.markdown("---")
+    st.subheader("Batch Results")
+    for item in uploaded_results:
+        invoice_id = item.get("invoice_id")
+        extraction = extraction_results.get(invoice_id)
+        mapping = mapping_results.get(invoice_id)
+        with st.expander(f"{item.get('file_name', '-')} — Invoice ID {invoice_id}"):
+            left, right = st.columns(2)
+            with left:
+                st.markdown("**Upload**")
+                st.write("Status: uploaded")
+                st.markdown("**Extraction**")
+                if extraction:
+                    fields = extraction.get("extracted_fields", {})
+                    st.write(f"Review Status: {format_review_status(extraction.get('review_status'))}")
+                    st.write(f"Supplier: {fields.get('supplier_name_raw') or '-'}")
+                    st.write(f"Entity: {fields.get('paying_entity_raw') or '-'}")
+                    st.write(f"Invoice #: {fields.get('invoice_number') or '-'}")
+                    st.write(f"Entity Source: {extraction.get('entity_source') or '-'}")
+                else:
+                    st.write("Not extracted yet.")
+            with right:
+                st.markdown("**Mapping**")
+                if mapping:
+                    entity = mapping.get("entity") or {}
+                    project = mapping.get("project") or {}
+                    st.write(f"Matched: {'Yes' if mapping.get('matched') else 'No'}")
+                    st.write(f"Match Type: {mapping.get('match_type') or '-'}")
+                    st.write(f"Confidence: {mapping.get('confidence') or '-'}")
+                    st.write(f"Mapped Entity: {entity.get('name') or 'No match'}")
+                    st.write(f"Mapped Project: {project.get('name') or 'No match'}")
+                else:
+                    st.write("Not mapped yet.")
+
+
+# ── Tab 3: Manual Entry ────────────────────────────────────────────────────────
+
+def _render_manual_entry():
+    st.subheader("Create Invoice Manually")
+    st.caption("Create an invoice by entering details manually")
+
+    if not can("edit_invoice"):
+        st.error("You don't have permission to create invoices.")
+        return
+
+    projects = get("/projects/") or []
+    entities = get("/entities/") or []
+
+    project_options = {f"{p.get('name')} ({p.get('group_name')})": p.get("id") for p in projects if p.get("name")}
+    entity_options = {"(unmapped)": None}
+    entity_options.update({e.get("name"): e.get("id") for e in entities if e.get("name")})
+
+    with st.form("manual_invoice_form"):
+        st.markdown("**Required Information**")
+        col1, col2 = st.columns(2)
+        with col1:
+            supplier_name = st.text_input("Supplier Name", placeholder="Enter supplier name")
+        with col2:
+            invoice_number = st.text_input("Invoice Number", placeholder="Enter invoice number")
+
+        col3, col4 = st.columns(2)
+        with col3:
+            invoice_date = st.date_input("Invoice Date", value=datetime.date.today())
+        with col4:
+            project_key = st.selectbox("Project", options=list(project_options.keys()), index=0 if project_options else None)
+
+        st.markdown("**Entity Information**")
+        col5, col6 = st.columns(2)
+        with col5:
+            paying_entity_raw = st.text_input("Entity Name (Raw)", placeholder="Enter entity name as it appears on invoice")
+        with col6:
+            paying_entity_key = st.selectbox("Link to Existing Entity (Optional)", options=list(entity_options.keys()), index=0)
+
+        st.markdown("**Amount Information**")
+        col7, col8, col9 = st.columns(3)
+        with col7:
+            gross_amount = st.number_input("Gross Amount", min_value=0.01, step=0.01, format="%.2f")
+        with col8:
+            vat_amount = st.number_input("VAT Amount", min_value=0.00, step=0.01, format="%.2f", value=0.00)
+        with col9:
+            net_amount = st.number_input("Net Amount", min_value=0.00, step=0.01, format="%.2f", help="Auto-calculated if left blank (Gross - VAT)")
+
+        st.markdown("**Optional Details**")
+        col10, col11 = st.columns(2)
+        with col10:
+            due_date = st.date_input("Due Date (Optional)", value=None)
+        with col11:
+            currency = st.selectbox("Currency", options=["GBP", "EUR", "USD"], index=0)
+
+        description = st.text_area("Description (Optional)", placeholder="Additional notes or description")
+        submitted = st.form_submit_button("Create Invoice", type="primary")
+
+    if submitted:
+        errors = []
+        if not supplier_name.strip():
+            errors.append("Supplier name is required")
+        if not invoice_number.strip():
+            errors.append("Invoice number is required")
+        if gross_amount <= 0:
+            errors.append("Gross amount must be greater than 0")
+        if not project_key:
+            errors.append("Project selection is required")
+        if not paying_entity_raw.strip() and entity_options.get(paying_entity_key) is None:
+            errors.append("Either entity name or linked entity must be provided")
+
+        if errors:
+            for error in errors:
+                st.error(error)
+            return
+
+        from services.invoices import create_manual_invoice
+        payload = {
+            "supplier_name_raw": supplier_name.strip(),
+            "invoice_number": invoice_number.strip(),
+            "gross_amount": gross_amount,
+            "invoice_date": invoice_date.isoformat(),
+            "project_id": project_options[project_key],
+            "vat_amount": vat_amount if vat_amount > 0 else None,
+            "currency": currency,
+        }
+        if paying_entity_raw.strip():
+            payload["paying_entity_raw"] = paying_entity_raw.strip()
+        if entity_options.get(paying_entity_key) is not None:
+            payload["paying_entity_id"] = entity_options[paying_entity_key]
+        if net_amount > 0:
+            payload["net_amount"] = net_amount
+        elif vat_amount > 0:
+            payload["net_amount"] = gross_amount - vat_amount
+        if due_date:
+            payload["due_date"] = due_date.isoformat()
+        if description.strip():
+            payload["description"] = description.strip()
+
+        with st.spinner("Creating invoice..."):
+            result = create_manual_invoice(payload)
+
+        if result:
+            st.success(f"✅ Invoice created successfully! ID: #{result.get('id')}")
+            if st.button("Create Another Invoice", type="secondary"):
+                st.rerun()
+        else:
+            st.error("Failed to create invoice. Please check the details and try again.")
+
+
+# ── Tab 4: Mapping ─────────────────────────────────────────────────────────────
+
+def _render_mapping():
+    from collections import defaultdict
+
+    entities = get("/entities/") or []
+    projects = get("/projects/") or []
+    rules = fetch_mapping_rules() or []
+
+    entity_options = {e.get("name"): e.get("id") for e in entities if e.get("name")}
+    project_options = {p.get("name"): p.get("id") for p in projects if p.get("name")}
+
+    tab_a, tab_b, tab_c = st.tabs(["🔍 Match Test", "📋 Mapping Rules", "🏢 Entities & Projects"])
+
+    with tab_a:
+        st.subheader("Test Entity Match")
+        st.write("Enter raw text to test how the matching engine maps it to an entity and project.")
+        with st.form("match_test_form"):
+            raw_text = st.text_input("Raw entity name", placeholder="e.g. VC PCL1 Limited")
+            run_match = st.form_submit_button("🔍 Test Match")
+
+        if run_match:
+            if not raw_text or not raw_text.strip():
+                st.warning("Please enter some raw text to test.")
+            else:
+                with st.spinner("Matching..."):
+                    result = test_match(raw_text.strip())
+                if result:
+                    metric_col1, metric_col2, metric_col3 = st.columns(3)
+                    with metric_col1:
+                        st.metric("Matched", "Yes" if result.get("matched") else "No")
+                    with metric_col2:
+                        st.metric("Match Type", result.get("match_type") or "-")
+                    with metric_col3:
+                        st.metric("Confidence", result.get("confidence") or "-")
+                    st.markdown("---")
+                    entity = result.get("entity") or {}
+                    project = result.get("project") or {}
+                    detail_col1, detail_col2 = st.columns(2)
+                    with detail_col1:
+                        st.write(f"**Raw Text:** {result.get('raw_text') or raw_text}")
+                        st.write(f"**Matched Entity:** {entity.get('name') or 'No match'}")
+                        st.write(f"**Entity ID:** {entity.get('id') or '-'}")
+                    with detail_col2:
+                        st.write(f"**Matched Project:** {project.get('name') or 'No match'}")
+                        st.write(f"**Project ID:** {project.get('id') or '-'}")
+                else:
+                    st.error("Match test failed.")
+
+    with tab_b:
+        st.subheader("Mapping Rules")
+        if rules:
+            st.markdown(f"**{len(rules)} active rule(s)**")
+            for rule in rules:
+                with st.container():
+                    st.markdown(
+                        f"**Pattern:** `{rule.get('raw_text_pattern') or '-'}`  \n"
+                        f"**Entity ID:** {rule.get('mapped_entity_id') or '-'}  \n"
+                        f"**Project ID:** {rule.get('mapped_project_id') or '-'}  \n"
+                        f"**Priority:** {rule.get('priority', 0)}"
+                    )
+                    st.markdown("---")
+        else:
+            st.info("No mapping rules yet.")
+
+        st.subheader("Create New Rule")
+        if not entities:
+            st.warning("No entities available. Seed entities first before creating rules.")
+        elif not projects:
+            st.warning("No projects available. Seed projects first before creating rules.")
+        else:
+            with st.form("create_rule_form"):
+                rule_text = st.text_input("Raw text pattern", placeholder="e.g. ROC Club Holdings Ltd")
+                selected_entity = st.selectbox("Map to Entity", options=list(entity_options.keys()))
+                selected_project = st.selectbox("Map to Project", options=list(project_options.keys()))
+                priority = st.number_input("Priority (higher = checked first)", min_value=0, value=0, step=1)
+                submit_rule = st.form_submit_button("💾 Save Rule")
+
+            if submit_rule:
+                if not rule_text or not rule_text.strip():
+                    st.warning("Please enter a raw text pattern.")
+                else:
+                    result = create_mapping_rule(
+                        raw_text=rule_text.strip(),
+                        entity_id=entity_options[selected_entity],
+                        project_id=project_options[selected_project],
+                        priority=int(priority),
+                    )
+                    if result:
+                        st.success(f"Rule created: '{rule_text}' → {selected_entity}")
+                        st.rerun()
+                    else:
+                        st.error("Could not create rule.")
+
+    with tab_c:
+        st.subheader("Entities & Projects")
+
+        if not projects and not entities:
+            st.info("No projects or entities found.")
+            return
+
+        project_id_to_name = {p["id"]: p["name"] for p in projects if p.get("id")}
+
+        entities_by_project = defaultdict(list)
+        unassigned = []
+        for e in entities:
+            pid = e.get("project_id_default")
+            if pid and pid in project_id_to_name:
+                entities_by_project[pid].append(e)
+            else:
+                unassigned.append(e)
+
+        for project in sorted(projects, key=lambda p: p.get("name", "")):
+            pid = project.get("id")
+            pname = project.get("name", "-")
+            project_entities = entities_by_project.get(pid, [])
+            count = len(project_entities)
+            with st.expander(f"**{pname}** — {count} entit{'y' if count == 1 else 'ies'}", expanded=False):
+                if project_entities:
+                    for e in sorted(project_entities, key=lambda x: x.get("name", "")):
+                        aliases = e.get("aliases") or []
+                        alias_str = f"  *(aliases: {', '.join(aliases)})*" if aliases else ""
+                        st.write(f"• {e['name']}{alias_str}")
+                else:
+                    st.caption("No entities assigned to this project.")
+
+        if unassigned:
+            with st.expander(f"**Unassigned entities** — {len(unassigned)}", expanded=False):
+                for e in sorted(unassigned, key=lambda x: x.get("name", "")):
+                    st.write(f"• {e['name']}")

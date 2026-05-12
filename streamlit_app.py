@@ -6,10 +6,7 @@ from auth.login import render_login
 from auth.set_password import render_set_password
 from views.dashboard import render_dashboard
 from views.invoices import render_invoice_register
-from views.upload import render_upload
-from views.manual_entry import render_manual_entry
 from views.credit_notes import render_credit_notes
-from views.mapping import render_mapping
 from views.users import render_users
 
 st.set_page_config(
@@ -50,7 +47,7 @@ with st.sidebar:
     st.caption(role.capitalize())
     st.markdown("---")
 
-    nav_options = ["Dashboard", "Invoice Register", "Credit Notes", "Upload", "Manual Entry", "Mapping"]
+    nav_options = ["Dashboard", "Invoice Register", "Credit Notes"]
     if role == "admin":
         nav_options.append("Users")
 
@@ -69,11 +66,5 @@ elif page == "Invoice Register":
     render_invoice_register()
 elif page == "Credit Notes":
     render_credit_notes()
-elif page == "Upload":
-    render_upload()
-elif page == "Manual Entry":
-    render_manual_entry()
-elif page == "Mapping":
-    render_mapping()
 elif page == "Users":
     render_users()
