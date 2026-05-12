@@ -22,7 +22,11 @@ def _handle_response(response):
         st.session_state.pop("session_token", None)
         st.session_state.pop("user", None)
         st.session_state.pop("permissions", None)
-        clear_session_cookie()
+        st.session_state["_logged_out"] = True
+        try:
+            clear_session_cookie()
+        except Exception:
+            pass
         st.rerun()
         return None
     response.raise_for_status()

@@ -36,7 +36,14 @@ def set_session_cookie(token: str):
 
 def clear_session_cookie():
     cm = _cookie_manager()
-    cm.remove(SESSION_COOKIE_NAME, path="/")
+    try:
+        cm.remove(SESSION_COOKIE_NAME, path="/")
+    except KeyError:
+        # CookieController.remove() calls self.__cookies.pop(name) after sending
+        # the browser command. If the key isn't in its local cache (e.g. freshly
+        # initialised controller), the pop raises KeyError even though the browser
+        # command was already dispatched successfully.
+        pass
 
 
 def restore_session_from_cookie():
