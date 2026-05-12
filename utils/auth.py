@@ -43,15 +43,17 @@ def restore_session_from_cookie():
     if "session_token" in st.session_state:
         return
 
-    cm = _cookie_manager()
-    # Do NOT call cm.refresh() here — it renders a second component with the
-    # same key in the same script run, causing a DuplicateWidgetID error and
-    # silently wiping cookie data on Chrome.
-    try:
-        token = cm.get(SESSION_COOKIE_NAME)
-    except (KeyError, Exception):
+    # After an explicit logout, st.context.cookies still reflects the cookies
+    # present at WebSocket-connection time (before the browser deletes the cookie).
+    # Skip restore until the user opens a fresh page/connection.
+    if st.session_state.get("_logged_out"):
         return
 
+    # st.context.cookies reads directly from the HTTP request's Cookie header —
+    # synchronous and rerun-independent. CookieController.get() was unreliable
+    # here because CookieController needs a React round-trip (an extra rerun) to
+    # populate its internal cache, so the first call always returned None.
+    token = st.context.cookies.get(SESSION_COOKIE_NAME)
     if not token:
         return
 
@@ -67,7 +69,11 @@ def restore_session_from_cookie():
             st.session_state["user"] = data.get("user", {})
             st.session_state["permissions"] = data.get("permissions", [])
         elif response.status_code == 401:
+            # Token in cookie is invalid; clear it and mark session as logged-out
+            # to prevent an infinite retry loop (st.context.cookies doesn't update
+            # mid-session even after the cookie is deleted).
             clear_session_cookie()
+            st.session_state["_logged_out"] = True
     except requests.exceptions.RequestException:
         pass
 

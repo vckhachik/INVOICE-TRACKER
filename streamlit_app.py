@@ -55,8 +55,9 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("Logout", use_container_width=True):
-        st.session_state.clear()
         clear_session_cookie()
+        st.session_state.clear()
+        st.session_state["_logged_out"] = True
         st.rerun()
 
 # ── Route ──────────────────────────────────────────────────────────────────────

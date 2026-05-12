@@ -39,6 +39,7 @@ def render_login():
                         except Exception:
                             pass
 
+                        st.session_state.pop("_logged_out", None)
                         st.session_state["session_token"] = token
                         st.session_state["user"] = data["user"]
                         st.session_state["permissions"] = permissions
