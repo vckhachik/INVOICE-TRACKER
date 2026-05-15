@@ -1,4 +1,5 @@
 from urllib.parse import quote_plus
+from typing import Optional
 
 from .api import get, post
 
@@ -27,3 +28,26 @@ def create_mapping_rule(raw_text: str, entity_id: int, project_id: int = None, p
         query += f"&project_id={project_id}"
 
     return post(query)
+
+
+def create_project(name: str, group_name: Optional[str] = None, description: Optional[str] = None):
+    payload = {"name": name}
+    if group_name:
+        payload["group_name"] = group_name
+    if description:
+        payload["description"] = description
+    return post("/projects/", data=payload)
+
+
+def create_entity(
+    name: str,
+    project_id_default: Optional[int] = None,
+    aliases: Optional[list] = None,
+    show_as_project: bool = False,
+):
+    payload: dict = {"name": name, "show_as_project": show_as_project}
+    if project_id_default is not None:
+        payload["project_id_default"] = project_id_default
+    if aliases:
+        payload["aliases"] = aliases
+    return post("/entities/", data=payload)

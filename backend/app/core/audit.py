@@ -28,6 +28,11 @@ class AuditAction:
     APPROVAL_REJECTED = "approval_rejected"
     APPROVAL_CANCELLED = "approval_cancelled"
 
+    # Mapping management
+    CREATE_PROJECT = "create_project"
+    CREATE_ENTITY = "create_entity"
+    UPDATE_ENTITY = "update_entity"
+
 
 def log_event(
     db: DBSession,

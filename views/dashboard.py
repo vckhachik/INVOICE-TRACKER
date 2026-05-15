@@ -279,7 +279,21 @@ def render_dashboard():
                     st.info("No entity breakdown available for this filtered project view yet.")
 
                 st.markdown("##### Invoices")
-                if filtered_project_invoices:
+                entity_filter_options = {"All entities": None}
+                for e in project_entities:
+                    entity_filter_options[e.get("entity") or "Unassigned"] = e.get("entity_id")
+                selected_entity_label = st.selectbox(
+                    "Filter by entity",
+                    options=list(entity_filter_options.keys()),
+                    key=f"entity_filter_{project_key}",
+                )
+                selected_entity_id = entity_filter_options[selected_entity_label]
+                table_invoices = (
+                    [inv for inv in filtered_project_invoices if inv.get("paying_entity_id") == selected_entity_id]
+                    if selected_entity_id is not None
+                    else filtered_project_invoices
+                )
+                if table_invoices:
                     invoice_rows = [
                         {
                             "ID": inv.get("id"),
@@ -296,7 +310,7 @@ def render_dashboard():
                             "VAT Rec.": "✅" if inv.get("is_vat_recovered") else "❌",
                             "Status": inv.get("review_status") or "—",
                         }
-                        for inv in filtered_project_invoices
+                        for inv in table_invoices
                     ]
                     st.dataframe(pd.DataFrame(invoice_rows), use_container_width=True, hide_index=True)
                 else:

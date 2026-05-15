@@ -7,7 +7,7 @@ from services.invoices import (
     fetch_invoices, update_status, delete_invoice, update_invoice,
     get_invoice_file_url, upload_invoices_batch, trigger_invoice_extraction,
 )
-from services.mapping import map_invoice, fetch_mapping_rules, test_match, create_mapping_rule
+from services.mapping import map_invoice, fetch_mapping_rules, test_match, create_mapping_rule, create_project, create_entity
 from services.credit_notes import delete_credit_note_link, create_credit_note_link, get_credit_note_file_url
 from utils.formatting import format_currency, format_date, format_status, format_review_status
 from utils.auth import can
@@ -661,6 +661,73 @@ def _render_mapping():
     with tab_c:
         st.subheader("Entities & Projects")
 
+        if can("manage_mappings"):
+            col_proj, col_ent = st.columns(2)
+
+            with col_proj:
+                st.markdown("**➕ Add Project**")
+                with st.form("add_project_form"):
+                    new_proj_name = st.text_input("Name *", placeholder="e.g. VCUK Fund I")
+                    new_proj_group = st.text_input("Group (optional)", placeholder="e.g. VCUK")
+                    submit_proj = st.form_submit_button("Create Project", use_container_width=True)
+                if submit_proj:
+                    if not new_proj_name or not new_proj_name.strip():
+                        st.warning("Project name is required.")
+                    else:
+                        result = create_project(
+                            name=new_proj_name.strip(),
+                            group_name=new_proj_group.strip() or None,
+                        )
+                        if result:
+                            st.success(f"'{result.get('name')}' created.")
+                            st.rerun()
+                        else:
+                            st.error("Could not create project.")
+
+            with col_ent:
+                st.markdown("**➕ Add Entity**")
+                with st.form("add_entity_form"):
+                    new_ent_name = st.text_input("Name *", placeholder="e.g. Valpre Capital UK Limited")
+                    project_choices = ["(none)"] + sorted(project_options.keys())
+                    selected_default_proj = st.selectbox("Default project (optional)", options=project_choices)
+                    new_ent_aliases = st.text_input(
+                        "Aliases (comma-separated)",
+                        placeholder="e.g. VCUK, Valpre UK",
+                    )
+                    new_ent_show_as_proj = st.checkbox(
+                        "Show as project",
+                        help="Auto-creates a paired project with the same name (e.g. for VCUK, VCI).",
+                    )
+                    submit_ent = st.form_submit_button("Create Entity", use_container_width=True)
+                if submit_ent:
+                    if not new_ent_name or not new_ent_name.strip():
+                        st.warning("Entity name is required.")
+                    else:
+                        aliases = (
+                            [a.strip() for a in new_ent_aliases.split(",") if a.strip()]
+                            if new_ent_aliases
+                            else None
+                        )
+                        default_pid = (
+                            project_options.get(selected_default_proj)
+                            if selected_default_proj != "(none)"
+                            else None
+                        )
+                        result = create_entity(
+                            name=new_ent_name.strip(),
+                            project_id_default=default_pid,
+                            aliases=aliases,
+                            show_as_project=new_ent_show_as_proj,
+                        )
+                        if result:
+                            extra = " (paired project auto-created)" if new_ent_show_as_proj else ""
+                            st.success(f"'{result.get('name')}' created.{extra}")
+                            st.rerun()
+                        else:
+                            st.error("Could not create entity.")
+
+            st.markdown("---")
+
         if not projects and not entities:
             st.info("No projects or entities found.")
             return
@@ -686,7 +753,8 @@ def _render_mapping():
                     for e in sorted(project_entities, key=lambda x: x.get("name", "")):
                         aliases = e.get("aliases") or []
                         alias_str = f"  *(aliases: {', '.join(aliases)})*" if aliases else ""
-                        st.write(f"• {e['name']}{alias_str}")
+                        show_tag = " 🏷 show_as_project" if e.get("show_as_project") else ""
+                        st.write(f"• {e['name']}{alias_str}{show_tag}")
                 else:
                     st.caption("No entities assigned to this project.")
 

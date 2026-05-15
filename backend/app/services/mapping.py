@@ -157,7 +157,12 @@ def apply_mapping_to_invoice(invoice: Invoice, db: Session) -> dict:
         if result["entity"]:
             invoice.paying_entity_id = result["entity"].id
         if result["project"]:
-            invoice.project_id = result["project"].id
+            entity = result["entity"]
+            # For show_as_project entities the paired project is a fallback only —
+            # don't overwrite an explicit project_id already on the invoice.
+            is_fallback = entity and getattr(entity, "show_as_project", False)
+            if not is_fallback or not invoice.project_id:
+                invoice.project_id = result["project"].id
         db.commit()
         db.refresh(invoice)
 

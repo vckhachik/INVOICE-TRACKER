@@ -7,6 +7,12 @@ class EntityCreate(BaseModel):
     name: str
     aliases: Optional[list] = None
     project_id_default: Optional[int] = None
+    show_as_project: bool = False
+
+
+class EntityUpdate(BaseModel):
+    aliases: Optional[list] = None
+    show_as_project: Optional[bool] = None
 
 
 class EntityResponse(BaseModel):
@@ -14,6 +20,7 @@ class EntityResponse(BaseModel):
     name: str
     aliases: Optional[list] = None
     project_id_default: Optional[int] = None
+    show_as_project: bool
     created_at: datetime
 
     class Config:

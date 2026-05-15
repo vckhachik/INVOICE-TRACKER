@@ -32,6 +32,12 @@ class Project(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     group_name = Column(String)
+    description = Column(Text, nullable=True)
+    source_entity_id = Column(
+        Integer,
+        ForeignKey("entities.id", use_alter=True, name="fk_projects_source_entity_id"),
+        nullable=True,
+    )
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -42,6 +48,7 @@ class Entity(Base):
     name = Column(String, nullable=False)
     aliases = Column(JSON)
     project_id_default = Column(Integer, ForeignKey("projects.id"))
+    show_as_project = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, server_default=func.now())
 
 

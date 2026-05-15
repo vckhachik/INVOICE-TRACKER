@@ -2,7 +2,8 @@ from collections import defaultdict
 import streamlit as st
 
 from services.api import get
-from services.mapping import fetch_mapping_rules, test_match, create_mapping_rule
+from services.mapping import fetch_mapping_rules, test_match, create_mapping_rule, create_project, create_entity
+from utils.auth import can
 
 
 def render_mapping():
@@ -102,6 +103,68 @@ def render_mapping():
     with tab3:
         st.subheader("Entities & Projects")
 
+        if can("MANAGE_MAPPINGS"):
+            with st.expander("➕ Add Project", expanded=False):
+                with st.form("add_project_form"):
+                    new_proj_name = st.text_input("Project name *", placeholder="e.g. VCUK Fund I")
+                    new_proj_group = st.text_input("Group name (optional)", placeholder="e.g. VCUK")
+                    submit_proj = st.form_submit_button("Create Project")
+                if submit_proj:
+                    if not new_proj_name or not new_proj_name.strip():
+                        st.warning("Project name is required.")
+                    else:
+                        result = create_project(
+                            name=new_proj_name.strip(),
+                            group_name=new_proj_group.strip() or None,
+                        )
+                        if result:
+                            st.success(f"Project '{result.get('name')}' created.")
+                            st.rerun()
+                        else:
+                            st.error("Could not create project.")
+
+            with st.expander("➕ Add Entity", expanded=False):
+                with st.form("add_entity_form"):
+                    new_ent_name = st.text_input("Entity name *", placeholder="e.g. Valpre Capital UK Limited")
+                    project_choices = ["(none)"] + sorted(project_options.keys())
+                    selected_default_proj = st.selectbox("Default project (optional)", options=project_choices)
+                    new_ent_aliases = st.text_input(
+                        "Aliases (optional, comma-separated)",
+                        placeholder="e.g. VCUK, Valpre UK",
+                    )
+                    new_ent_show_as_proj = st.checkbox(
+                        "Show as project",
+                        help="Auto-creates a paired project with the same name (e.g. for VCUK, VCI).",
+                    )
+                    submit_ent = st.form_submit_button("Create Entity")
+                if submit_ent:
+                    if not new_ent_name or not new_ent_name.strip():
+                        st.warning("Entity name is required.")
+                    else:
+                        aliases = (
+                            [a.strip() for a in new_ent_aliases.split(",") if a.strip()]
+                            if new_ent_aliases
+                            else None
+                        )
+                        default_pid = (
+                            project_options.get(selected_default_proj)
+                            if selected_default_proj != "(none)"
+                            else None
+                        )
+                        result = create_entity(
+                            name=new_ent_name.strip(),
+                            project_id_default=default_pid,
+                            aliases=aliases,
+                            show_as_project=new_ent_show_as_proj,
+                        )
+                        if result:
+                            label = result.get("name")
+                            extra = " (paired project auto-created)" if new_ent_show_as_proj else ""
+                            st.success(f"Entity '{label}' created.{extra}")
+                            st.rerun()
+                        else:
+                            st.error("Could not create entity.")
+
         if not projects and not entities:
             st.info("No projects or entities found.")
             return
@@ -127,7 +190,8 @@ def render_mapping():
                     for e in sorted(project_entities, key=lambda x: x.get("name", "")):
                         aliases = e.get("aliases") or []
                         alias_str = f"  *(aliases: {', '.join(aliases)})*" if aliases else ""
-                        st.write(f"• {e['name']}{alias_str}")
+                        show_tag = " 🏷 show_as_project" if e.get("show_as_project") else ""
+                        st.write(f"• {e['name']}{alias_str}{show_tag}")
                 else:
                     st.caption("No entities assigned to this project.")
 
