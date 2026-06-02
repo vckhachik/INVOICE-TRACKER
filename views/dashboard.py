@@ -1,9 +1,11 @@
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from datetime import date
 from pathlib import Path
 
 from services.api import get
+from services.balances import get_all_latest_balances, post_balance, get_balance_history
 from utils.formatting import format_currency, CURRENCY_SYMBOLS
 
 
@@ -146,6 +148,48 @@ COLOURS = {
 }
 
 
+@st.dialog("💰 Bank Balance")
+def balance_dialog(entity_id: int, entity_name: str, current_bal):
+    st.markdown(f"**{entity_name}**")
+    st.divider()
+
+    current_amount = float(current_bal.get("balance_amount", 0)) if current_bal else 0.0
+    current_currency = current_bal.get("currency", "GBP") if current_bal else "GBP"
+    currency_options = ["GBP", "EUR", "USD", "CHF", "AED", "SAR"]
+    curr_idx = currency_options.index(current_currency) if current_currency in currency_options else 0
+
+    bf1, bf2 = st.columns([2, 1])
+    new_amount = bf1.number_input("Balance amount", value=current_amount, step=1000.0, format="%.2f")
+    new_currency = bf2.selectbox("Currency", currency_options, index=curr_idx)
+    new_date = st.date_input("Balance date", value=date.today())
+    new_note = st.text_input("Note (optional)", placeholder="e.g. Per bank statement 01 Jun")
+
+    c1, c2 = st.columns(2)
+    if c1.button("💾 Save", use_container_width=True, type="primary"):
+        result = post_balance(entity_id, new_amount, new_currency, new_date, new_note or None)
+        if result:
+            st.rerun()
+        else:
+            st.error("Failed to save.")
+
+    if c2.button("📋 History", use_container_width=True):
+        key = f"dlg_hist_{entity_id}"
+        st.session_state[key] = not st.session_state.get(key, False)
+
+    if st.session_state.get(f"dlg_hist_{entity_id}"):
+        st.divider()
+        history = get_balance_history(entity_id)
+        if history:
+            for h in history:
+                h_date = h.get("balance_date", "—")
+                h_curr = h.get("currency", "GBP")
+                h_amt = float(h.get("balance_amount", 0))
+                h_note = h.get("note") or "—"
+                st.caption(f"📅 {h_date}  |  {h_curr} {h_amt:,.2f}  |  {h_note}")
+        else:
+            st.caption("No history yet.")
+
+
 def render_dashboard():
     logo_path = Path(__file__).resolve().parents[1] / "assets" / "valpre_logo.png"
     if logo_path.exists():
@@ -176,6 +220,8 @@ def render_dashboard():
     entities = get("/entities/") or []
     activity = get("/dashboard/activity") or []
     fx_rates = get("/fx/rates/") or []
+    latest_balances = get_all_latest_balances()
+    balance_map = {b.get("entity_id"): b for b in latest_balances}
 
     if not fx_rates:
         st.warning("No FX rates available. Using fallback exchange rates for display only.")
@@ -263,18 +309,26 @@ def render_dashboard():
 
                 project_entities = display_project.get("entities", [])
                 if project_entities:
-                    entity_rows_display = [
-                        {
-                            "Entity": e.get("entity") or "Unassigned",
-                            "Invoices": e.get("count", 0),
-                            "Total Unpaid": format_currency(e.get("unpaid_total"), currency_symbol),
-                            "Total Paid": format_currency(e.get("paid_total"), currency_symbol),
-                            "Unrecovered VAT": format_currency(e.get("unrecovered_vat_total"), currency_symbol),
-                            "Total": format_currency(e.get("total"), currency_symbol),
-                        }
-                        for e in project_entities
-                    ]
-                    st.dataframe(pd.DataFrame(entity_rows_display), width="stretch", hide_index=True)
+                    hc1, hc2, hc3, hc4, hc5, hc6 = st.columns([3, 1, 2, 2, 2, 2])
+                    hc1.caption("Entity"); hc2.caption("Inv."); hc3.caption("Unpaid")
+                    hc4.caption("Paid"); hc5.caption("Total"); hc6.caption("Balance")
+
+                    for e in project_entities:
+                        entity_id = e.get("entity_id")
+                        entity_name = e.get("entity") or "Unassigned"
+                        bal = balance_map.get(entity_id)
+                        bal_label = (
+                            f"💰 {bal.get('currency', '')} {float(bal.get('balance_amount', 0)):,.0f}"
+                            if bal else "💰 —"
+                        )
+                        ec1, ec2, ec3, ec4, ec5, ec6 = st.columns([3, 1, 2, 2, 2, 2])
+                        ec1.markdown(f"**{entity_name}**")
+                        ec2.write(str(e.get("count", 0)))
+                        ec3.write(format_currency(e.get("unpaid_total"), currency_symbol))
+                        ec4.write(format_currency(e.get("paid_total"), currency_symbol))
+                        ec5.write(format_currency(e.get("total"), currency_symbol))
+                        if ec6.button(bal_label, key=f"bal_{project_key}_{entity_id}", help="Click to edit bank balance"):
+                            balance_dialog(entity_id, entity_name, bal)
                 else:
                     st.info("No entity breakdown available for this filtered project view yet.")
 

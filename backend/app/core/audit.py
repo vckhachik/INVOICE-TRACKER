@@ -33,6 +33,9 @@ class AuditAction:
     CREATE_ENTITY = "create_entity"
     UPDATE_ENTITY = "update_entity"
 
+    # Balances
+    BALANCE_UPDATED = "balance_updated"
+
 
 def log_event(
     db: DBSession,

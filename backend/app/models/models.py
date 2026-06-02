@@ -277,3 +277,17 @@ class CreditNoteLink(Base):
     allocated_amount = Column(Numeric(12, 2), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     created_by = Column(Integer, ForeignKey("users.id"))
+
+
+class EntityBankBalance(Base):
+    __tablename__ = "entity_bank_balances"
+
+    id = Column(Integer, primary_key=True)
+    entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False, index=True)
+    balance_amount = Column(Numeric(18, 2), nullable=False)
+    currency = Column(String(3), nullable=False, default="GBP")
+    balance_date = Column(Date, nullable=False)
+    note = Column(Text)
+    entry_type = Column(String(20), nullable=False, default="manual")
+    updated_by_user_id = Column(Integer, ForeignKey("users.id"))
+    updated_at = Column(DateTime, server_default=func.now(), nullable=False)

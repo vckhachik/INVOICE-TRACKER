@@ -7,6 +7,7 @@ import app.models.models  # noqa: F401
 # Import routers
 from app.api import invoices, projects, entities, dashboard, mapping
 from app.api import auth, users, fx, credit_notes
+from app.api.balances import entity_balance_router, balance_router
 
 app = FastAPI(
     title="Invoice Tracker API",
@@ -37,6 +38,8 @@ app.include_router(fx.router)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(credit_notes.router)
+app.include_router(entity_balance_router)
+app.include_router(balance_router)
 
 @app.get("/")
 def root():
