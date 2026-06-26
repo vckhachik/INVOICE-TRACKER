@@ -101,3 +101,20 @@ def get_invoice_file_url(invoice_id: int):
 def create_manual_invoice(payload: dict):
     return post("/invoices/manual", payload)
 
+
+def create_recurring_invoice(payload: dict):
+    return post("/invoices/recurring", payload)
+
+
+def fetch_recurring_invoices(active_only: bool = False):
+    qs = "?active_only=true" if active_only else ""
+    return get(f"/invoices/recurring{qs}") or []
+
+
+def update_recurring_invoice(recurring_id: int, payload: dict):
+    return patch(f"/invoices/recurring/{recurring_id}", data=payload)
+
+
+def delete_recurring_invoice(recurring_id: int):
+    return delete(f"/invoices/recurring/{recurring_id}")
+

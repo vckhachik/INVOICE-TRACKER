@@ -6,10 +6,16 @@ from services.api import get
 from services.invoices import (
     fetch_invoices, update_status, delete_invoice, update_invoice,
     get_invoice_file_url, upload_invoices_batch, trigger_invoice_extraction,
+    create_recurring_invoice, fetch_recurring_invoices,
+    update_recurring_invoice, delete_recurring_invoice,
 )
 from services.mapping import map_invoice, fetch_mapping_rules, test_match, create_mapping_rule, create_project, create_entity
 from services.credit_notes import delete_credit_note_link, create_credit_note_link, get_credit_note_file_url
 from utils.formatting import format_currency, format_date, format_status, format_review_status
+from utils.currency import (
+    SUPPORTED_CURRENCIES, CURRENCY_SYMBOLS,
+    build_rate_map, convert_amount, format_native, format_converted,
+)
 from utils.auth import can
 
 
@@ -18,7 +24,7 @@ def render_invoice_register():
     st.caption("Browse, upload, enter, and map invoices — all in one place")
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Register", "📤 Upload", "➕ Manual Entry", "🗺️ Mapping"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Register", "📤 Upload", "➕ Manual Entry", "🗺️ Mapping", "🔁 Recurring"])
 
     with tab1:
         _render_register()
@@ -32,16 +38,32 @@ def render_invoice_register():
     with tab4:
         _render_mapping()
 
+    with tab5:
+        _render_recurring()
+
 
 # ── Tab 1: Register ────────────────────────────────────────────────────────────
 
 def _render_register():
-    top_col1, top_col2 = st.columns([1, 5])
+    top_col1, top_col2, top_col3 = st.columns([1, 3, 2])
     with top_col1:
         if st.button("🔄 Refresh"):
             st.rerun()
     with top_col2:
         page_size = st.selectbox("Rows", [25, 50, 100], index=1)
+    with top_col3:
+        display_currency = st.selectbox(
+            "Equivalent in",
+            options=["GBP", "EUR", "USD", "SAR", "AED", "CHF", "LBP"],
+            index=0,
+            help="Controls the second amount column. Native currency column is always shown.",
+            key="register_display_currency",
+        )
+
+    fx_rates = get("/fx/rates/") or []
+    rate_map = build_rate_map(fx_rates)
+    disp_symbol = CURRENCY_SYMBOLS.get(display_currency, display_currency + " ")
+    equiv_col_label = f"Gross ({disp_symbol.strip()})"
 
     _projects = get("/projects/") or []
     _entities = get("/entities/") or []
@@ -77,7 +99,19 @@ def _render_register():
         st.info("No invoices found for the selected filters.")
         return
 
-    st.markdown(f"**{len(invoices)} invoice(s) loaded**")
+    # Totals in selected display currency
+    total_gross_converted = sum(
+        convert_amount(inv.get("gross_amount"), inv.get("currency") or "GBP", display_currency, rate_map)
+        for inv in invoices
+    )
+    total_col1, total_col2, total_col3 = st.columns(3)
+    with total_col1:
+        st.metric(f"Total Gross ({disp_symbol.strip()})", format_converted(total_gross_converted, display_currency))
+    with total_col2:
+        st.markdown(f"**{len(invoices)} invoice(s) loaded**")
+    if not fx_rates:
+        with total_col3:
+            st.caption("⚠️ No FX rates in DB — using fallback rates. Set real rates in Settings → FX Rates.")
 
     rows = [
         {
@@ -86,9 +120,13 @@ def _render_register():
             "Supplier": inv.get("supplier_name_raw") or "-",
             "Entity": inv.get("paying_entity_raw") or "-",
             "Project": project_id_to_name.get(inv.get("project_id"), inv.get("project_id") or "-"),
-            "Gross": format_currency(inv.get("gross_amount")),
-            "VAT": format_currency(inv.get("vat_amount")),
-            "Net": format_currency(inv.get("net_amount")),
+            "Gross (native)": format_native(inv.get("gross_amount"), inv.get("currency") or "GBP"),
+            equiv_col_label: format_converted(
+                convert_amount(inv.get("gross_amount"), inv.get("currency") or "GBP", display_currency, rate_map),
+                display_currency,
+            ),
+            "VAT": format_native(inv.get("vat_amount"), inv.get("currency") or "GBP"),
+            "Net": format_native(inv.get("net_amount"), inv.get("currency") or "GBP"),
             "Date": format_date(inv.get("invoice_date")),
             "Due": format_date(inv.get("due_date")),
             "Paid": format_status(inv.get("is_paid")),
@@ -132,9 +170,16 @@ def _render_register():
         st.write(f"**Supplier:** {selected.get('supplier_name_raw') or '-'}")
         st.write(f"**Entity:** {selected.get('paying_entity_raw') or '-'}")
     with detail_col2:
-        st.write(f"**Gross:** {format_currency(selected.get('gross_amount'))}")
-        st.write(f"**VAT:** {format_currency(selected.get('vat_amount'))}")
-        st.write(f"**Net:** {format_currency(selected.get('net_amount'))}")
+        inv_curr = (selected.get("currency") or "GBP").upper()
+        gross_native = format_native(selected.get("gross_amount"), inv_curr)
+        gross_equiv = format_converted(
+            convert_amount(selected.get("gross_amount"), inv_curr, display_currency, rate_map),
+            display_currency,
+        ) if inv_curr != display_currency else None
+        st.write(f"**Gross:** {gross_native}" + (f" ({gross_equiv})" if gross_equiv else ""))
+        st.write(f"**VAT:** {format_native(selected.get('vat_amount'), inv_curr)}")
+        st.write(f"**Net:** {format_native(selected.get('net_amount'), inv_curr)}")
+        st.write(f"**Currency:** {inv_curr}")
         st.write(f"**Review:** {format_review_status(selected.get('review_status'))}")
     with detail_col3:
         st.write(f"**Invoice Date:** {format_date(selected.get('invoice_date'))}")
@@ -248,7 +293,12 @@ def _render_register():
             with date_col2:
                 edit_due_date = st.text_input("Due Date (YYYY-MM-DD)", value=str(selected.get("due_date") or ""))
 
-            st.caption("Amounts accept formats like 88900, 88,900, or £88,900")
+            current_currency = (selected.get("currency") or "GBP").upper()
+            curr_idx = SUPPORTED_CURRENCIES.index(current_currency) if current_currency in SUPPORTED_CURRENCIES else 0
+            edit_currency = st.selectbox("Currency", options=SUPPORTED_CURRENCIES, index=curr_idx,
+                                         help="Change if the extraction picked the wrong currency")
+
+            st.caption("Amounts accept formats like 88900, 88,900, or £88,900 — enter in the invoice's own currency")
             amount_col1, amount_col2, amount_col3 = st.columns(3)
             with amount_col1:
                 edit_gross_amount = st.text_input("Gross Amount", value=str(selected.get("gross_amount") or ""))
@@ -271,6 +321,7 @@ def _render_register():
                     "project_id": project_options.get(edit_project_select),
                     "invoice_date": edit_invoice_date or None,
                     "due_date": edit_due_date or None,
+                    "currency": edit_currency,
                     "gross_amount": edit_gross_amount or None,
                     "vat_amount": edit_vat_amount or None,
                     "net_amount": edit_net_amount or None,
@@ -472,13 +523,20 @@ def _render_manual_entry():
     entity_options = {"(unmapped)": None}
     entity_options.update({e.get("name"): e.get("id") for e in entities if e.get("name")})
 
+    FREQ_OPTIONS = ["(one-time)", "Daily", "Weekly", "Monthly", "Yearly"]
+    FREQ_MAP = {"Daily": "daily", "Weekly": "weekly", "Monthly": "monthly", "Yearly": "yearly"}
+
     with st.form("manual_invoice_form"):
         st.markdown("**Required Information**")
         col1, col2 = st.columns(2)
         with col1:
             supplier_name = st.text_input("Supplier Name", placeholder="Enter supplier name")
         with col2:
-            invoice_number = st.text_input("Invoice Number", placeholder="Enter invoice number")
+            invoice_number = st.text_input(
+                "Invoice Number",
+                placeholder="Enter invoice number",
+                help="For recurring invoices this is the base number — each occurrence appends -1, -2, …",
+            )
 
         col3, col4 = st.columns(2)
         with col3:
@@ -507,9 +565,28 @@ def _render_manual_entry():
         with col10:
             due_date = st.date_input("Due Date (Optional)", value=None)
         with col11:
-            currency = st.selectbox("Currency", options=["GBP", "EUR", "USD"], index=0)
+            currency = st.selectbox("Currency", options=SUPPORTED_CURRENCIES, index=0)
 
         description = st.text_area("Description (Optional)", placeholder="Additional notes or description")
+
+        st.markdown("---")
+        with st.expander("🔁 Make Recurring (optional)"):
+            freq_type = st.selectbox("Frequency", options=FREQ_OPTIONS, index=0)
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
+                freq_interval = st.number_input("Repeat every N units", min_value=1, max_value=365, value=1, step=1,
+                                                help="e.g. 2 + Monthly = every 2 months")
+            with col_r2:
+                day_of_month = st.number_input("Day of month (Monthly only)", min_value=1, max_value=28, value=1, step=1,
+                                               help="e.g. 15 = always on the 15th")
+            rec_start_date = st.date_input("First occurrence", value=datetime.date.today())
+            end_condition = st.radio("End condition", ["No end", "End date", "Max occurrences"], horizontal=True)
+            col_r3, col_r4 = st.columns(2)
+            with col_r3:
+                rec_end_date = st.date_input("End date", value=None)
+            with col_r4:
+                max_occurrences = st.number_input("Max occurrences", min_value=1, value=12, step=1)
+
         submitted = st.form_submit_button("Create Invoice", type="primary")
 
     if submitted:
@@ -525,43 +602,83 @@ def _render_manual_entry():
         if not paying_entity_raw.strip() and entity_options.get(paying_entity_key) is None:
             errors.append("Either entity name or linked entity must be provided")
 
+        is_recurring = freq_type != "(one-time)"
+        if is_recurring and end_condition == "End date" and rec_end_date and rec_end_date < rec_start_date:
+            errors.append("End date must be on or after the first occurrence date")
+
         if errors:
             for error in errors:
                 st.error(error)
             return
 
         from services.invoices import create_manual_invoice
-        payload = {
+
+        base_payload = {
             "supplier_name_raw": supplier_name.strip(),
-            "invoice_number": invoice_number.strip(),
             "gross_amount": gross_amount,
-            "invoice_date": invoice_date.isoformat(),
             "project_id": project_options[project_key],
             "vat_amount": vat_amount if vat_amount > 0 else None,
             "currency": currency,
         }
         if paying_entity_raw.strip():
-            payload["paying_entity_raw"] = paying_entity_raw.strip()
+            base_payload["paying_entity_raw"] = paying_entity_raw.strip()
         if entity_options.get(paying_entity_key) is not None:
-            payload["paying_entity_id"] = entity_options[paying_entity_key]
+            base_payload["paying_entity_id"] = entity_options[paying_entity_key]
         if net_amount > 0:
-            payload["net_amount"] = net_amount
+            base_payload["net_amount"] = net_amount
         elif vat_amount > 0:
-            payload["net_amount"] = gross_amount - vat_amount
-        if due_date:
-            payload["due_date"] = due_date.isoformat()
+            base_payload["net_amount"] = gross_amount - vat_amount
         if description.strip():
-            payload["description"] = description.strip()
+            base_payload["description"] = description.strip()
 
-        with st.spinner("Creating invoice..."):
-            result = create_manual_invoice(payload)
+        if is_recurring:
+            rec_payload = {
+                **base_payload,
+                "invoice_number_base": invoice_number.strip(),
+                "frequency": FREQ_MAP[freq_type],
+                "frequency_interval": int(freq_interval),
+                "start_date": rec_start_date.isoformat(),
+            }
+            if freq_type == "Monthly":
+                rec_payload["day_of_month"] = int(day_of_month)
+            if end_condition == "End date" and rec_end_date:
+                rec_payload["end_date"] = rec_end_date.isoformat()
+            elif end_condition == "Max occurrences":
+                rec_payload["max_occurrences"] = int(max_occurrences)
 
-        if result:
-            st.success(f"✅ Invoice created successfully! ID: #{result.get('id')}")
-            if st.button("Create Another Invoice", type="secondary"):
-                st.rerun()
+            with st.spinner("Setting up recurring invoice…"):
+                result = create_recurring_invoice(rec_payload)
+
+            if result:
+                occ = result.get("occurrence_count", 0)
+                next_due = result.get("next_due_date", "")
+                st.success(
+                    f"✅ Recurring invoice set up! "
+                    f"{'First occurrence created. ' if occ > 0 else ''}"
+                    f"Next due: **{next_due}**"
+                )
+                if st.button("Set up another", type="secondary"):
+                    st.rerun()
+            else:
+                st.error("Failed to create recurring invoice. Please check the details and try again.")
         else:
-            st.error("Failed to create invoice. Please check the details and try again.")
+            one_off_payload = {
+                **base_payload,
+                "invoice_number": invoice_number.strip(),
+                "invoice_date": invoice_date.isoformat(),
+            }
+            if due_date:
+                one_off_payload["due_date"] = due_date.isoformat()
+
+            with st.spinner("Creating invoice…"):
+                result = create_manual_invoice(one_off_payload)
+
+            if result:
+                st.success(f"✅ Invoice created successfully! ID: #{result.get('id')}")
+                if st.button("Create Another Invoice", type="secondary"):
+                    st.rerun()
+            else:
+                st.error("Failed to create invoice. Please check the details and try again.")
 
 
 # ── Tab 4: Mapping ─────────────────────────────────────────────────────────────
@@ -762,3 +879,79 @@ def _render_mapping():
             with st.expander(f"**Unassigned entities** — {len(unassigned)}", expanded=False):
                 for e in sorted(unassigned, key=lambda x: x.get("name", "")):
                     st.write(f"• {e['name']}")
+
+
+# ── Tab 5: Recurring Invoices ──────────────────────────────────────────────────
+
+def _render_recurring():
+    st.subheader("Recurring Invoices")
+    st.caption("Invoices generated automatically on a set schedule. Each occurrence is created as not approved to pay.")
+
+    if not can("edit_invoice"):
+        st.error("You don't have permission to view recurring invoices.")
+        return
+
+    FREQ_LABELS = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly", "yearly": "Yearly"}
+
+    def _freq_description(r):
+        base = FREQ_LABELS.get(r.get("frequency", ""), r.get("frequency", ""))
+        n = r.get("frequency_interval", 1)
+        prefix = f"Every {n} " if n > 1 else ""
+        dom = r.get("day_of_month")
+        suffix = f" on day {dom}" if dom and r.get("frequency") == "monthly" else ""
+        return f"{prefix}{base}{suffix}"
+
+    def _end_description(r):
+        if r.get("end_date"):
+            return f"Until {r['end_date']}"
+        if r.get("max_occurrences"):
+            done = r.get("occurrence_count", 0)
+            return f"{done} / {r['max_occurrences']} occurrences"
+        return "No end"
+
+    show_inactive = st.checkbox("Show inactive / completed", value=False)
+    rows = fetch_recurring_invoices(active_only=not show_inactive)
+
+    if not rows:
+        st.info("No recurring invoices set up yet. Use the ➕ Manual Entry tab to create one.")
+        return
+
+    st.markdown(f"**{len(rows)} recurring invoice(s)**")
+    st.markdown("---")
+
+    for r in rows:
+        is_active = r.get("is_active", True)
+        status_badge = "🟢 Active" if is_active else "⚫ Inactive"
+        occ = r.get("occurrence_count", 0)
+        header = (
+            f"{status_badge} · **{r.get('supplier_name_raw', '—')}** · "
+            f"{_freq_description(r)} · Next: {r.get('next_due_date', '—')} · "
+            f"{occ} generated"
+        )
+        with st.expander(header, expanded=False):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.write(f"**Base invoice #:** {r.get('invoice_number_base', '—')}")
+                st.write(f"**Amount:** {r.get('currency', 'GBP')} {float(r.get('gross_amount', 0)):,.2f}")
+                st.write(f"**Project ID:** {r.get('project_id', '—')}")
+            with c2:
+                st.write(f"**Frequency:** {_freq_description(r)}")
+                st.write(f"**Started:** {r.get('start_date', '—')}")
+                st.write(f"**End condition:** {_end_description(r)}")
+            with c3:
+                st.write(f"**Last generated:** {r.get('last_generated_at') or '—'}")
+                st.write(f"**Occurrences:** {occ}")
+                if r.get("description"):
+                    st.write(f"**Note:** {r['description']}")
+
+            if can("edit_invoice"):
+                act_col1, act_col2, _ = st.columns([1, 1, 4])
+                with act_col1:
+                    toggle_label = "⏸ Pause" if is_active else "▶ Resume"
+                    if st.button(toggle_label, key=f"toggle_{r['id']}"):
+                        update_recurring_invoice(r["id"], {"is_active": not is_active})
+                        st.rerun()
+                with act_col2:
+                    if st.button("🗑 Delete", key=f"del_{r['id']}"):
+                        delete_recurring_invoice(r["id"])
+                        st.rerun()

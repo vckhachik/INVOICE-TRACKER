@@ -279,6 +279,35 @@ class CreditNoteLink(Base):
     created_by = Column(Integer, ForeignKey("users.id"))
 
 
+class RecurringInvoice(Base):
+    __tablename__ = "recurring_invoices"
+
+    id = Column(Integer, primary_key=True)
+    supplier_name_raw = Column(String(255), nullable=False)
+    paying_entity_raw = Column(String(255))
+    paying_entity_id = Column(Integer, ForeignKey("entities.id"))
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    invoice_number_base = Column(String(255), nullable=False)
+    gross_amount = Column(Numeric(12, 2), nullable=False)
+    vat_amount = Column(Numeric(12, 2))
+    net_amount = Column(Numeric(12, 2))
+    currency = Column(String(10), nullable=False, default="GBP")
+    description = Column(Text)
+    frequency = Column(String(20), nullable=False)        # daily/weekly/monthly/yearly
+    frequency_interval = Column(Integer, nullable=False, default=1)
+    day_of_month = Column(Integer)                        # 1-28, monthly only
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date)
+    max_occurrences = Column(Integer)
+    occurrence_count = Column(Integer, nullable=False, default=0)
+    next_due_date = Column(Date, nullable=False)
+    last_generated_at = Column(DateTime)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+
 class EntityBankBalance(Base):
     __tablename__ = "entity_bank_balances"
 

@@ -70,3 +70,4 @@ argon2-cffi>=23.1.0
 zxcvbn>=4.4.28
 email-validator>=2.1.0
 slowapi>=0.1.9
+apscheduler>=3.10.0

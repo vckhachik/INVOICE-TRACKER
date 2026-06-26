@@ -13,7 +13,7 @@ from app.core.permissions import require_permission, Permission
 
 router = APIRouter(prefix="/fx", tags=["fx"])
 
-SUPPORTED_CURRENCIES = ["GBP", "EUR", "USD", "SAR", "AED", "CHF"]
+SUPPORTED_CURRENCIES = ["GBP", "EUR", "USD", "SAR", "AED", "CHF", "LBP"]
 
 CURRENCY_SYMBOLS = {
     "GBP": "£",
@@ -22,6 +22,7 @@ CURRENCY_SYMBOLS = {
     "SAR": "﷼",
     "AED": "د.إ",
     "CHF": "CHF",
+    "LBP": "LL",
 }
 
 

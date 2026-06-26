@@ -7,13 +7,7 @@ from pathlib import Path
 from services.api import get
 from services.balances import get_all_latest_balances, post_balance, get_balance_history
 from utils.formatting import format_currency, CURRENCY_SYMBOLS
-
-
-def safe_float(value):
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
+from utils.currency import build_rate_map, convert_amount, safe_float
 
 
 def invoice_matches_filters(invoice, show_paid=True, approved_only=False, unrecovered_vat_only=False):
@@ -32,44 +26,6 @@ def filter_invoices(invoices, show_paid=True, approved_only=False, unrecovered_v
         if invoice_matches_filters(inv, show_paid=show_paid, approved_only=approved_only,
                                    unrecovered_vat_only=unrecovered_vat_only)
     ]
-
-
-DEFAULT_RATE_MAP = {
-    "GBP": 1.0, "EUR": 0.88, "USD": 0.79,
-    "SAR": 0.21, "AED": 0.22, "CHF": 0.90,
-}
-
-
-def build_rate_map(rates):
-    if not rates:
-        return DEFAULT_RATE_MAP.copy()
-    rate_map = {"GBP": 1.0}
-    for rate in rates:
-        currency = (rate.get("from_currency") or "").upper().strip()
-        if currency:
-            rate_map[currency] = safe_float(rate.get("rate"))
-    for currency, value in DEFAULT_RATE_MAP.items():
-        rate_map.setdefault(currency, value)
-    return rate_map
-
-
-def convert_amount(amount, invoice_currency, display_currency, rate_map):
-    amount = safe_float(amount)
-    invoice_currency = (invoice_currency or "GBP").upper()
-    display_currency = (display_currency or "GBP").upper()
-    if invoice_currency == display_currency:
-        return amount
-    if invoice_currency == "GBP":
-        rate_to = rate_map.get(display_currency)
-        return amount / rate_to if rate_to else amount
-    if display_currency == "GBP":
-        rate_from = rate_map.get(invoice_currency)
-        return amount * rate_from if rate_from else amount
-    rate_from = rate_map.get(invoice_currency)
-    rate_to = rate_map.get(display_currency)
-    if rate_from and rate_to:
-        return amount * rate_from / rate_to
-    return amount
 
 
 def normalize_invoice_amounts(invoice, display_currency, rate_map):

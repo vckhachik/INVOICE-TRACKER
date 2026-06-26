@@ -8,7 +8,8 @@ CURRENCY_SYMBOLS = {
     "USD": "$",
     "SAR": "﷼",
     "AED": "د.إ",
-    "CHF": "CHF",
+    "CHF": "CHF ",
+    "LBP": "LL ",
 }
 
 
@@ -35,7 +36,6 @@ def format_date(value) -> str:
         if isinstance(value, (datetime, date)):
             return value.strftime("%Y-%m-%d")
 
-        # Try parsing string
         parsed = datetime.fromisoformat(str(value))
         return parsed.strftime("%Y-%m-%d")
 
