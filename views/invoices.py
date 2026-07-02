@@ -256,9 +256,9 @@ def _render_register():
     if submit_status:
         success_count = 0
         for invoice in selected_invoices:
-            new_paid = bool(invoice.get("is_paid", False)) if paid_action == "Keep current" else (paid_action == "Set to Yes")
-            new_approved = bool(invoice.get("is_approved_to_pay", False)) if approved_action == "Keep current" else (approved_action == "Set to Yes")
-            new_vat = bool(invoice.get("is_vat_recovered", False)) if vat_action == "Keep current" else (vat_action == "Set to Yes")
+            new_paid     = None if paid_action     == "Keep current" else (paid_action     == "Set to Yes")
+            new_approved = None if approved_action == "Keep current" else (approved_action == "Set to Yes")
+            new_vat      = None if vat_action      == "Keep current" else (vat_action      == "Set to Yes")
             result = update_status(invoice.get("id"), is_paid=new_paid, is_approved_to_pay=new_approved, is_vat_recovered=new_vat)
             if result:
                 success_count += 1

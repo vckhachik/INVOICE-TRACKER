@@ -688,6 +688,22 @@ def trigger_extraction(
         invoice.vat_amount = parse_amount(fields.get("vat_amount"))
         invoice.net_amount = parse_amount(fields.get("net_amount"))
 
+        # Resolve currency from Azure CurrencyValue (code takes priority over symbol)
+        SYMBOL_TO_CODE = {
+            "£": "GBP", "€": "EUR", "$": "USD",
+            "﷼": "SAR", "د.إ": "AED", "LL": "LBP", "LBP": "LBP",
+            "CHF": "CHF", "Fr": "CHF",
+        }
+        raw_code = (fields.get("currency_code") or "").strip().upper()
+        raw_symbol = (fields.get("currency_symbol") or "").strip()
+        resolved_currency = (
+            raw_code if raw_code in SYMBOL_TO_CODE.values()
+            else SYMBOL_TO_CODE.get(raw_symbol)
+            or SYMBOL_TO_CODE.get(raw_code)
+        )
+        if resolved_currency:
+            invoice.currency = resolved_currency
+
         key_fields_present = (
             bool(invoice.supplier_name_raw)
             and bool(invoice.invoice_number)

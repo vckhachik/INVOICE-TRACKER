@@ -81,6 +81,17 @@ def extract_invoice(file_path: str) -> dict:
         )
         confidence[output_name] = field["confidence"]
 
+    # Extract currency from InvoiceTotal CurrencyValue object.
+    # Azure returns amount fields as CurrencyValue with .currency_code and .currency_symbol.
+    extracted["currency_code"] = None
+    extracted["currency_symbol"] = None
+    invoice_total_field = fields.get("InvoiceTotal")
+    if invoice_total_field:
+        cv = getattr(invoice_total_field, "value", None)
+        if cv is not None:
+            extracted["currency_code"] = getattr(cv, "currency_code", None)
+            extracted["currency_symbol"] = getattr(cv, "symbol", None) or getattr(cv, "currency_symbol", None)
+
     # Extract line items
     items_field = fields.get("Items")
     line_items = []
