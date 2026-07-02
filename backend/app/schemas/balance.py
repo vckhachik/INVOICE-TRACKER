@@ -8,11 +8,13 @@ class BalanceCreate(BaseModel):
     currency: str = "GBP"
     balance_date: date
     note: Optional[str] = None
+    account_name: Optional[str] = None
 
 
 class BalanceResponse(BaseModel):
     id: int
     entity_id: int
+    account_name: Optional[str] = None
     balance_amount: float
     currency: str
     balance_date: date

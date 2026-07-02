@@ -313,6 +313,7 @@ class EntityBankBalance(Base):
 
     id = Column(Integer, primary_key=True)
     entity_id = Column(Integer, ForeignKey("entities.id"), nullable=False, index=True)
+    account_name = Column(String(255), nullable=True)
     balance_amount = Column(Numeric(18, 2), nullable=False)
     currency = Column(String(3), nullable=False, default="GBP")
     balance_date = Column(Date, nullable=False)

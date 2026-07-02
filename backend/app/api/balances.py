@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func as sqlfunc
+from sqlalchemy import func as sqlfunc, and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.audit import AuditAction, log_event
@@ -39,13 +39,18 @@ def create_entity_balance(
     db: Session = Depends(get_db),
     actor: User = Depends(current_user),
 ):
-    if not db.query(Entity).filter(Entity.id == entity_id).first():
+    entity = db.query(Entity).filter(Entity.id == entity_id).first()
+    if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
+
+    currency_upper = payload.currency.upper()
+    account_name = payload.account_name or f"{entity.name} {currency_upper}"
 
     balance = EntityBankBalance(
         entity_id=entity_id,
+        account_name=account_name,
         balance_amount=payload.balance_amount,
-        currency=payload.currency.upper(),
+        currency=currency_upper,
         balance_date=payload.balance_date,
         note=payload.note,
         entry_type="manual",
@@ -91,21 +96,30 @@ def get_latest_balances(
     db: Session = Depends(get_db),
     actor: User = Depends(current_user),
 ):
-    """Latest balance entry per entity (one row per entity that has a balance)."""
+    """Latest balance entry per (entity_id, account_name) — one row per account."""
     subq = (
         db.query(
             EntityBankBalance.entity_id,
+            EntityBankBalance.account_name,
             sqlfunc.max(EntityBankBalance.updated_at).label("max_updated_at"),
         )
-        .group_by(EntityBankBalance.entity_id)
+        .group_by(EntityBankBalance.entity_id, EntityBankBalance.account_name)
         .subquery()
+    )
+    join_condition = and_(
+        EntityBankBalance.entity_id == subq.c.entity_id,
+        EntityBankBalance.updated_at == subq.c.max_updated_at,
+        or_(
+            EntityBankBalance.account_name == subq.c.account_name,
+            and_(
+                EntityBankBalance.account_name.is_(None),
+                subq.c.account_name.is_(None),
+            ),
+        ),
     )
     return (
         db.query(EntityBankBalance)
-        .join(
-            subq,
-            (EntityBankBalance.entity_id == subq.c.entity_id)
-            & (EntityBankBalance.updated_at == subq.c.max_updated_at),
-        )
+        .join(subq, join_condition)
+        .order_by(EntityBankBalance.entity_id, EntityBankBalance.account_name)
         .all()
     )

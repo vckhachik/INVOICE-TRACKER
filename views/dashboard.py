@@ -105,24 +105,42 @@ COLOURS = {
 
 
 @st.dialog("💰 Bank Balance")
-def balance_dialog(entity_id: int, entity_name: str, current_bal):
+def balance_dialog(entity_id: int, entity_name: str, entity_bals: list):
     st.markdown(f"**{entity_name}**")
     st.divider()
 
-    current_amount = float(current_bal.get("balance_amount", 0)) if current_bal else 0.0
-    current_currency = current_bal.get("currency", "GBP") if current_bal else "GBP"
-    currency_options = ["GBP", "EUR", "USD", "CHF", "AED", "SAR"]
-    curr_idx = currency_options.index(current_currency) if current_currency in currency_options else 0
+    currency_options = ["GBP", "EUR", "USD", "CHF", "AED", "SAR", "LBP"]
+    existing_names = [b.get("account_name") or b.get("currency", "Account") for b in entity_bals]
+    account_options = existing_names + ["+ New account"]
 
-    bf1, bf2 = st.columns([2, 1])
-    new_amount = bf1.number_input("Balance amount", value=current_amount, step=1000.0, format="%.2f")
-    new_currency = bf2.selectbox("Currency", currency_options, index=curr_idx)
-    new_date = st.date_input("Balance date", value=date.today())
-    new_note = st.text_input("Note (optional)", placeholder="e.g. Per bank statement 01 Jun")
+    if entity_bals:
+        selected_acct_label = st.selectbox("Account", account_options)
+    else:
+        selected_acct_label = "+ New account"
+
+    if selected_acct_label == "+ New account":
+        new_currency = st.selectbox("Currency", currency_options)
+        default_acct_name = f"{entity_name} {new_currency}"
+        new_acct_name = st.text_input("Account name", value=default_acct_name)
+        new_amount = st.number_input("Balance amount", value=0.0, step=1000.0, format="%.2f")
+        new_date = st.date_input("Balance date", value=date.today())
+        new_note = st.text_input("Note (optional)", placeholder="e.g. Per bank statement 01 Jun")
+    else:
+        idx = existing_names.index(selected_acct_label)
+        current_bal = entity_bals[idx]
+        new_acct_name = selected_acct_label
+        current_amount = float(current_bal.get("balance_amount", 0))
+        current_currency = current_bal.get("currency", "GBP")
+        curr_idx = currency_options.index(current_currency) if current_currency in currency_options else 0
+        bf1, bf2 = st.columns([2, 1])
+        new_amount = bf1.number_input("Balance amount", value=current_amount, step=1000.0, format="%.2f")
+        new_currency = bf2.selectbox("Currency", currency_options, index=curr_idx)
+        new_date = st.date_input("Balance date", value=date.today())
+        new_note = st.text_input("Note (optional)", placeholder="e.g. Per bank statement 01 Jun")
 
     c1, c2 = st.columns(2)
     if c1.button("💾 Save", use_container_width=True, type="primary"):
-        result = post_balance(entity_id, new_amount, new_currency, new_date, new_note or None)
+        result = post_balance(entity_id, new_amount, new_currency, new_date, new_note or None, new_acct_name)
         if result:
             st.rerun()
         else:
@@ -141,7 +159,8 @@ def balance_dialog(entity_id: int, entity_name: str, current_bal):
                 h_curr = h.get("currency", "GBP")
                 h_amt = float(h.get("balance_amount", 0))
                 h_note = h.get("note") or "—"
-                st.caption(f"📅 {h_date}  |  {h_curr} {h_amt:,.2f}  |  {h_note}")
+                h_acct = h.get("account_name") or h_curr
+                st.caption(f"📅 {h_date}  |  {h_acct}  |  {h_curr} {h_amt:,.2f}  |  {h_note}")
         else:
             st.caption("No history yet.")
 
@@ -177,7 +196,12 @@ def render_dashboard():
     activity = get("/dashboard/activity") or []
     fx_rates = get("/fx/rates/") or []
     latest_balances = get_all_latest_balances()
-    balance_map = {b.get("entity_id"): b for b in latest_balances}
+    balance_map: dict = {}
+    for b in latest_balances:
+        eid = b.get("entity_id")
+        if eid not in balance_map:
+            balance_map[eid] = []
+        balance_map[eid].append(b)
 
     if not fx_rates:
         st.warning("No FX rates available. Using fallback exchange rates for display only.")
@@ -272,19 +296,25 @@ def render_dashboard():
                     for e in project_entities:
                         entity_id = e.get("entity_id")
                         entity_name = e.get("entity") or "Unassigned"
-                        bal = balance_map.get(entity_id)
-                        bal_label = (
-                            f"💰 {bal.get('currency', '')} {float(bal.get('balance_amount', 0)):,.0f}"
-                            if bal else "💰 —"
-                        )
+                        entity_bals = balance_map.get(entity_id, [])
                         ec1, ec2, ec3, ec4, ec5, ec6 = st.columns([3, 1, 2, 2, 2, 2])
                         ec1.markdown(f"**{entity_name}**")
                         ec2.write(str(e.get("count", 0)))
                         ec3.write(format_currency(e.get("unpaid_total"), currency_symbol))
                         ec4.write(format_currency(e.get("paid_total"), currency_symbol))
                         ec5.write(format_currency(e.get("total"), currency_symbol))
-                        if ec6.button(bal_label, key=f"bal_{project_key}_{entity_id}", help="Click to edit bank balance"):
-                            balance_dialog(entity_id, entity_name, bal)
+                        with ec6:
+                            if entity_bals:
+                                for bal in entity_bals:
+                                    acct = bal.get("account_name") or bal.get("currency", "?")
+                                    amt = float(bal.get("balance_amount", 0))
+                                    curr = bal.get("currency", "GBP")
+                                    btn_key = f"bal_{project_key}_{entity_id}_{acct}"
+                                    if st.button(f"💰 {curr} {amt:,.0f}", key=btn_key, use_container_width=True, help=acct):
+                                        balance_dialog(entity_id, entity_name, entity_bals)
+                            else:
+                                if st.button("💰 —", key=f"bal_{project_key}_{entity_id}", use_container_width=True, help="Click to add bank balance"):
+                                    balance_dialog(entity_id, entity_name, [])
                 else:
                     st.info("No entity breakdown available for this filtered project view yet.")
 
