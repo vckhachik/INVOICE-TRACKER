@@ -59,7 +59,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
+# Register routers — recurring must come before invoices.router to avoid
+# /invoices/{invoice_id} swallowing /invoices/recurring requests.
+app.include_router(recurring.router)
 app.include_router(invoices.router)
 app.include_router(projects.router)
 app.include_router(entities.router)
@@ -71,7 +73,6 @@ app.include_router(users.router)
 app.include_router(credit_notes.router)
 app.include_router(entity_balance_router)
 app.include_router(balance_router)
-app.include_router(recurring.router)
 
 
 @app.get("/")
