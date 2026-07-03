@@ -48,6 +48,13 @@ class RecurringInvoiceCreate(BaseModel):
 
 
 class RecurringInvoiceUpdate(BaseModel):
+    supplier_name_raw: Optional[str] = None
+    invoice_number_base: Optional[str] = None
+    gross_amount: Optional[Decimal] = None
+    currency: Optional[str] = None
+    frequency: Optional[str] = None
+    frequency_interval: Optional[int] = Field(default=None, ge=1)
+    day_of_month: Optional[int] = Field(default=None, ge=1, le=28)
     end_date: Optional[date] = None
     max_occurrences: Optional[int] = Field(default=None, ge=1)
     is_active: Optional[bool] = None

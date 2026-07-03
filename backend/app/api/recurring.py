@@ -52,6 +52,20 @@ def update(
     if not r:
         raise HTTPException(status_code=404, detail="Recurring invoice not found")
 
+    if body.supplier_name_raw is not None:
+        r.supplier_name_raw = body.supplier_name_raw
+    if body.invoice_number_base is not None:
+        r.invoice_number_base = body.invoice_number_base
+    if body.gross_amount is not None:
+        r.gross_amount = body.gross_amount
+    if body.currency is not None:
+        r.currency = body.currency.upper()
+    if body.frequency is not None:
+        r.frequency = body.frequency
+    if body.frequency_interval is not None:
+        r.frequency_interval = body.frequency_interval
+    if body.day_of_month is not None:
+        r.day_of_month = body.day_of_month
     if body.end_date is not None:
         r.end_date = body.end_date
     if body.max_occurrences is not None:

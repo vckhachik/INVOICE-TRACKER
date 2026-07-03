@@ -945,13 +945,59 @@ def _render_recurring():
                     st.write(f"**Note:** {r['description']}")
 
             if can("edit_invoice"):
-                act_col1, act_col2, _ = st.columns([1, 1, 4])
+                act_col1, act_col2, act_col3, _ = st.columns([1, 1, 1, 3])
                 with act_col1:
                     toggle_label = "⏸ Pause" if is_active else "▶ Resume"
                     if st.button(toggle_label, key=f"toggle_{r['id']}"):
                         update_recurring_invoice(r["id"], {"is_active": not is_active})
                         st.rerun()
                 with act_col2:
+                    edit_key = f"edit_rec_{r['id']}"
+                    if st.button("✏️ Edit", key=f"editbtn_{r['id']}"):
+                        st.session_state[edit_key] = not st.session_state.get(edit_key, False)
+                with act_col3:
                     if st.button("🗑 Delete", key=f"del_{r['id']}"):
                         delete_recurring_invoice(r["id"])
                         st.rerun()
+
+                if st.session_state.get(f"edit_rec_{r['id']}"):
+                    st.markdown("---")
+                    CURRENCIES = ["GBP", "EUR", "USD", "CHF", "AED", "SAR", "LBP"]
+                    FREQS = ["monthly", "weekly", "daily", "yearly"]
+                    with st.form(key=f"form_rec_{r['id']}"):
+                        ef1, ef2 = st.columns(2)
+                        new_supplier = ef1.text_input("Supplier", value=r.get("supplier_name_raw", ""))
+                        new_inv_base = ef2.text_input("Invoice # base", value=r.get("invoice_number_base", ""))
+                        ef3, ef4 = st.columns(2)
+                        new_amount = ef3.number_input("Amount", value=float(r.get("gross_amount", 0)), step=100.0, format="%.2f")
+                        curr_idx = CURRENCIES.index(r.get("currency", "GBP")) if r.get("currency", "GBP") in CURRENCIES else 0
+                        new_currency = ef4.selectbox("Currency", CURRENCIES, index=curr_idx)
+                        ef5, ef6, ef7 = st.columns(3)
+                        freq_idx = FREQS.index(r.get("frequency", "monthly")) if r.get("frequency") in FREQS else 0
+                        new_freq = ef5.selectbox("Frequency", FREQS, index=freq_idx)
+                        new_interval = ef6.number_input("Every N", value=int(r.get("frequency_interval", 1)), min_value=1, step=1)
+                        new_dom = ef7.number_input("Day of month", value=int(r.get("day_of_month") or 1), min_value=1, max_value=28, step=1) if new_freq == "monthly" else None
+                        ef8, ef9 = st.columns(2)
+                        new_end_date = ef8.date_input("End date (optional)", value=r.get("end_date") or None)
+                        new_max_occ = ef9.number_input("Max occurrences (optional)", value=int(r.get("max_occurrences") or 0), min_value=0, step=1)
+                        new_desc = st.text_input("Description / note", value=r.get("description") or "")
+
+                        if st.form_submit_button("💾 Save changes", type="primary"):
+                            payload = {
+                                "supplier_name_raw": new_supplier,
+                                "invoice_number_base": new_inv_base,
+                                "gross_amount": new_amount,
+                                "currency": new_currency,
+                                "frequency": new_freq,
+                                "frequency_interval": int(new_interval),
+                                "description": new_desc or None,
+                            }
+                            if new_freq == "monthly" and new_dom:
+                                payload["day_of_month"] = int(new_dom)
+                            if new_end_date:
+                                payload["end_date"] = str(new_end_date)
+                            if new_max_occ and new_max_occ > 0:
+                                payload["max_occurrences"] = int(new_max_occ)
+                            update_recurring_invoice(r["id"], payload)
+                            st.session_state[f"edit_rec_{r['id']}"] = False
+                            st.rerun()
