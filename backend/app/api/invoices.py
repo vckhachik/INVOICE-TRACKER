@@ -16,11 +16,9 @@ from app.schemas.invoice import InvoiceResponse, InvoiceStatusUpdate, ManualInvo
 from app.services.activity import log_invoice_activity
 from app.services.entity_extraction import extract_entity_from_text
 from app.services.extraction import extract_invoice
+from app.core.storage import delete_stored_file, resolve_stored_path, write_upload
 
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
-
-STORAGE_PATH = "storage/invoices"
-os.makedirs(STORAGE_PATH, exist_ok=True)
 
 ALLOWED_TYPES = {"application/pdf", "image/png", "image/jpeg"}
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
@@ -97,6 +95,7 @@ def upload_invoice(
     db: Session = Depends(get_db),
     actor: User = Depends(require_permission(Permission.EDIT_INVOICE)),
 ):
+    stored_path = None
     try:
         contents = file.file.read()
 
@@ -127,10 +126,7 @@ def upload_invoice(
             raise HTTPException(status_code=409, detail="Duplicate invoice file")
 
         stored_filename = f"{file_hash}{extension}"
-        stored_path = os.path.join(STORAGE_PATH, stored_filename)
-
-        with open(stored_path, "wb") as f:
-            f.write(contents)
+        stored_path, _ = write_upload("invoice", stored_filename, contents)
 
         invoice_file = InvoiceFile(
             original_filename=original_name,
@@ -174,6 +170,8 @@ def upload_invoice(
         raise
     except Exception:
         db.rollback()
+        if stored_path:
+            delete_stored_file(stored_path)
         raise HTTPException(status_code=500, detail="Upload failed")
 
 
@@ -187,6 +185,7 @@ def upload_invoices_batch(
     failed = []
 
     for file in files:
+        stored_path = None
         try:
             contents = file.file.read()
 
@@ -235,10 +234,7 @@ def upload_invoices_batch(
                 continue
 
             stored_filename = f"{file_hash}{extension}"
-            stored_path = os.path.join(STORAGE_PATH, stored_filename)
-
-            with open(stored_path, "wb") as f:
-                f.write(contents)
+            stored_path, _ = write_upload("invoice", stored_filename, contents)
 
             invoice_file = InvoiceFile(
                 original_filename=original_name,
@@ -283,6 +279,8 @@ def upload_invoices_batch(
 
         except Exception as e:
             db.rollback()
+            if stored_path:
+                delete_stored_file(stored_path)
             failed.append({
                 "file_name": getattr(file, "filename", "unknown"),
                 "error": str(e),
@@ -325,11 +323,12 @@ def get_invoice_file(
     if not invoice_file:
         raise HTTPException(status_code=404, detail="Invoice file not found")
 
-    if not os.path.exists(invoice_file.stored_path):
+    stored_path = resolve_stored_path(invoice_file.stored_path)
+    if not stored_path.is_file():
         raise HTTPException(status_code=404, detail="Stored invoice file not found")
 
     return FileResponse(
-        path=invoice_file.stored_path,
+        path=stored_path,
         media_type=invoice_file.mime_type or "application/octet-stream",
         filename=invoice_file.original_filename,
         headers={"Content-Disposition": f"inline; filename=\"{invoice_file.original_filename}\""},
@@ -598,10 +597,10 @@ def delete_invoice(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete invoice: {str(e)}")
 
-    if stored_path and os.path.exists(stored_path):
+    if stored_path:
         try:
-            os.remove(stored_path)
-        except OSError:
+            delete_stored_file(stored_path)
+        except (OSError, ValueError):
             pass
 
     return {"message": "Invoice deleted successfully"}
@@ -627,7 +626,7 @@ def trigger_extraction(
         invoice.ocr_status = "processing"
         db.commit()
 
-        result = extract_invoice(invoice_file.stored_path)
+        result = extract_invoice(str(resolve_stored_path(invoice_file.stored_path)))
 
         if result["status"] == "no_document_extracted":
             invoice.ocr_status = "failed"
@@ -846,4 +845,3 @@ def get_invoice_credit_note_links(
             "is_approved_to_pay": cn.is_approved_to_pay,
         })
     return result
-    

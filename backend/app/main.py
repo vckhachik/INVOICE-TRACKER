@@ -13,6 +13,7 @@ from app.api import invoices, projects, entities, dashboard, mapping
 from app.api import auth, users, fx, credit_notes
 from app.api.balances import entity_balance_router, balance_router
 from app.api import recurring
+from app.core.storage import ensure_storage_ready, storage_root
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,10 @@ def _run_recurring_job():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    directories = ensure_storage_ready()
+    logger.info("File storage root: %s", storage_root())
+    logger.info("Invoice storage: %s", directories["invoice"])
+    logger.info("Credit note storage: %s", directories["credit_note"])
     scheduler = BackgroundScheduler()
     scheduler.add_job(_run_recurring_job, "cron", hour=6, minute=0, id="recurring_daily")
     scheduler.start()

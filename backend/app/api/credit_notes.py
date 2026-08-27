@@ -20,11 +20,9 @@ from app.schemas.credit_note import (
     CreditNoteLinkResponse,
 )
 from app.services.activity import log_invoice_activity
+from app.core.storage import delete_stored_file, resolve_stored_path, write_upload
 
 router = APIRouter(prefix="/credit-notes", tags=["Credit Notes"])
-
-STORAGE_PATH = "storage/credit_notes"
-os.makedirs(STORAGE_PATH, exist_ok=True)
 
 ALLOWED_TYPES = {"application/pdf", "image/png", "image/jpeg"}
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
@@ -118,11 +116,12 @@ def get_credit_note_file(
     invoice_file = db.query(InvoiceFile).filter(InvoiceFile.id == cn.file_id).first()
     if not invoice_file:
         raise HTTPException(status_code=404, detail="File record not found")
-    if not os.path.exists(invoice_file.stored_path):
+    stored_path = resolve_stored_path(invoice_file.stored_path)
+    if not stored_path.is_file():
         raise HTTPException(status_code=404, detail="Stored file not found on disk")
 
     return FileResponse(
-        path=invoice_file.stored_path,
+        path=stored_path,
         media_type=invoice_file.mime_type or "application/octet-stream",
         filename=invoice_file.original_filename,
         headers={"Content-Disposition": f'inline; filename="{invoice_file.original_filename}"'},
@@ -137,6 +136,7 @@ def upload_credit_note(
     db: Session = Depends(get_db),
     actor: User = Depends(require_permission(Permission.EDIT_INVOICE)),
 ):
+    stored_path = None
     try:
         contents = file.file.read()
 
@@ -158,9 +158,7 @@ def upload_credit_note(
             raise HTTPException(status_code=409, detail="Duplicate file")
 
         stored_filename = f"{file_hash}{extension}"
-        stored_path = os.path.join(STORAGE_PATH, stored_filename)
-        with open(stored_path, "wb") as f:
-            f.write(contents)
+        stored_path, _ = write_upload("credit_note", stored_filename, contents)
 
         invoice_file = InvoiceFile(
             original_filename=original_name,
@@ -198,6 +196,8 @@ def upload_credit_note(
         raise
     except Exception:
         db.rollback()
+        if stored_path:
+            delete_stored_file(stored_path)
         raise HTTPException(status_code=500, detail="Upload failed")
 
 
@@ -442,10 +442,10 @@ def delete_credit_note(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete credit note: {str(e)}")
 
-    if stored_path and os.path.exists(stored_path):
+    if stored_path:
         try:
-            os.remove(stored_path)
-        except OSError:
+            delete_stored_file(stored_path)
+        except (OSError, ValueError):
             pass
 
     return {"message": "Credit note deleted successfully"}
