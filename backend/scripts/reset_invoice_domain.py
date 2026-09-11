@@ -102,6 +102,9 @@ def main() -> int:
         if args.confirmation != CONFIRMATION:
             parser.error(f"--confirmation {CONFIRMATION!r} is required before deletion.")
 
+        # The count queries above start SQLAlchemy's implicit read transaction.
+        # End it before opening the explicit all-or-nothing delete transaction.
+        db.rollback()
         with db.begin():
             db.query(CreditNoteLink).delete(synchronize_session=False)
             db.query(ApprovalRequest).delete(synchronize_session=False)
