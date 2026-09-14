@@ -14,6 +14,7 @@ from app.core.deps import current_user
 from app.core.permissions import require_permission, has_permission, Permission
 from app.models.models import Invoice, InvoiceFile, InvoiceActivityLog, Project, User
 from app.schemas.invoice import (
+    InboxSummaryResponse,
     InvoiceListResponse,
     InvoiceResponse,
     InvoiceStatusUpdate,
@@ -28,6 +29,7 @@ from app.services.aging import (
     bucket_date_range,
     compute_aging,
 )
+from app.services.inbox import get_inbox_summary
 from app.services.entity_extraction import extract_entity_from_text
 from app.services.extraction import extract_invoice
 from app.core.storage import delete_stored_file, resolve_stored_path, write_upload
@@ -215,6 +217,26 @@ def get_invoices(
 
     items = [InvoiceResponse.model_validate(_attach_aging(inv, today)) for inv in invoices]
     return InvoiceListResponse(items=items, total=total)
+
+
+@router.get("/inbox", response_model=InboxSummaryResponse)
+def get_invoices_inbox(
+    db: Session = Depends(get_db),
+    actor: User = Depends(current_user),
+):
+    """Read-only summary of invoices that may need a decision. Visible to
+    every authenticated role — no permission gate, since this only surfaces
+    what already exists; any future action stays behind its own existing
+    permission check (e.g. APPROVE_TO_PAY), same as the Register today.
+    """
+    today = date.today()
+    summary = get_inbox_summary(db)
+    for queue in summary["queues"].values():
+        queue["items"] = [
+            InvoiceResponse.model_validate(_attach_aging(inv, today))
+            for inv in queue["items"]
+        ]
+    return InboxSummaryResponse(**summary)
 
 
 @router.post("/upload", response_model=InvoiceResponse)

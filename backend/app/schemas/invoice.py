@@ -43,6 +43,23 @@ class InvoiceListResponse(BaseModel):
     total: int
 
 
+class InboxQueue(BaseModel):
+    total: int
+    items: List[InvoiceResponse]
+
+
+class InboxQueues(BaseModel):
+    needs_manual_check: InboxQueue
+    unmapped: InboxQueue
+    awaiting_approval: InboxQueue
+    approved_unpaid: InboxQueue
+
+
+class InboxSummaryResponse(BaseModel):
+    needs_action_count: int
+    queues: InboxQueues
+
+
 class ManualInvoiceCreate(BaseModel):
     supplier_name_raw: str = Field(min_length=1)
     invoice_number: str = Field(min_length=1)

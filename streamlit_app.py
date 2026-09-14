@@ -5,6 +5,7 @@ from utils.auth import restore_session_from_cookie, set_session_cookie, clear_se
 from auth.login import render_login
 from auth.set_password import render_set_password
 from views.dashboard import render_dashboard
+from views.inbox import render_inbox
 from views.invoices import render_invoice_register
 from views.credit_notes import render_credit_notes
 from views.users import render_users
@@ -47,7 +48,7 @@ with st.sidebar:
     st.caption(role.capitalize())
     st.markdown("---")
 
-    nav_options = ["Dashboard", "Invoice Register", "Credit Notes"]
+    nav_options = ["Dashboard", "Inbox", "Invoice Register", "Credit Notes"]
     if role == "admin":
         nav_options.append("Users")
 
@@ -63,6 +64,8 @@ with st.sidebar:
 # ── Route ──────────────────────────────────────────────────────────────────────
 if page == "Dashboard":
     render_dashboard()
+elif page == "Inbox":
+    render_inbox()
 elif page == "Invoice Register":
     render_invoice_register()
 elif page == "Credit Notes":

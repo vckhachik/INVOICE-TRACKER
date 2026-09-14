@@ -72,6 +72,27 @@ def fetch_invoice(invoice_id: int):
     return get(f"/invoices/{invoice_id}")
 
 
+EMPTY_INBOX_QUEUE = {"total": 0, "items": []}
+
+
+def fetch_inbox_summary():
+    """Returns {"needs_action_count": N, "queues": {name: {"total", "items"}}}.
+    All four queues (needs_manual_check, unmapped, awaiting_approval,
+    approved_unpaid) are computed and paginated server-side."""
+    result = get("/invoices/inbox")
+    if not result:
+        return {
+            "needs_action_count": 0,
+            "queues": {
+                "needs_manual_check": dict(EMPTY_INBOX_QUEUE),
+                "unmapped": dict(EMPTY_INBOX_QUEUE),
+                "awaiting_approval": dict(EMPTY_INBOX_QUEUE),
+                "approved_unpaid": dict(EMPTY_INBOX_QUEUE),
+            },
+        }
+    return result
+
+
 def upload_invoice(file):
     file.seek(0)
     return post(
