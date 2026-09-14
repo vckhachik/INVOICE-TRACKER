@@ -160,8 +160,11 @@ def _render_register():
     st.caption(f"{len(selected_invoices)} invoice(s) selected")
     st.markdown("### Selected Invoice")
 
-    selected_file_url = get_invoice_file_url(selected.get("id"))
-    st.link_button("📄 Open Invoice in New Tab", selected_file_url, use_container_width=False)
+    if selected.get("file_id"):
+        selected_file_url = get_invoice_file_url(selected.get("id"))
+        st.link_button("📄 Open Invoice in New Tab", selected_file_url, use_container_width=False)
+    else:
+        st.caption("📄 No file attached (manual or recurring entry)")
 
     detail_col1, detail_col2, detail_col3 = st.columns(3)
     with detail_col1:
