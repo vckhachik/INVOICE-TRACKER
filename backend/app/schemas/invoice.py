@@ -1,7 +1,9 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime, date
 from decimal import Decimal
+
+VALID_EXPENSE_NATURES = {"invoice", "accrual"}
 
 
 class InvoiceResponse(BaseModel):
@@ -26,11 +28,19 @@ class InvoiceResponse(BaseModel):
     is_vat_recovered: bool = False
     is_approved_to_pay: bool = False
     is_legacy: bool
+    expense_nature: str = "invoice"
+    aging_days: Optional[int] = None
+    aging_bucket: Optional[str] = None
     created_at: datetime
-    
+
 
     class Config:
         from_attributes = True
+
+
+class InvoiceListResponse(BaseModel):
+    items: List[InvoiceResponse]
+    total: int
 
 
 class ManualInvoiceCreate(BaseModel):
@@ -46,12 +56,20 @@ class ManualInvoiceCreate(BaseModel):
     due_date: Optional[date] = None
     description: Optional[str] = None
     currency: str = "GBP"
+    expense_nature: str = "invoice"
 
     @field_validator("gross_amount")
     @classmethod
     def validate_gross_amount(cls, v):
         if v <= 0:
             raise ValueError("gross_amount must be greater than 0")
+        return v
+
+    @field_validator("expense_nature")
+    @classmethod
+    def validate_expense_nature(cls, v):
+        if v not in VALID_EXPENSE_NATURES:
+            raise ValueError(f"expense_nature must be one of: {', '.join(sorted(VALID_EXPENSE_NATURES))}")
         return v
 
     @field_validator("paying_entity_id", "paying_entity_raw")

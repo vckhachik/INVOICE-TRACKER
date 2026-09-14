@@ -10,6 +10,32 @@ from utils.formatting import format_currency, CURRENCY_SYMBOLS
 from utils.currency import build_rate_map, convert_amount, safe_float
 
 
+def fetch_all_invoices_for_dashboard():
+    """Load all invoice pages for portfolio-wide dashboard totals.
+
+    The invoice API now limits a single request to 500 rows.  The Register
+    intentionally paginates, but the Dashboard's summary needs the full
+    matching invoice set, so it retrieves successive API pages here.
+    """
+    page_size = 500
+    offset = 0
+    invoices = []
+
+    while True:
+        response = get(f"/invoices/?limit={page_size}&offset={offset}")
+        if not response:
+            return []
+
+        page_items = response.get("items", [])
+        total = response.get("total", 0)
+        invoices.extend(page_items)
+
+        if not page_items or len(invoices) >= total:
+            return invoices
+
+        offset += len(page_items)
+
+
 def invoice_matches_filters(invoice, show_paid=True, approved_only=False, unrecovered_vat_only=False):
     if not show_paid and invoice.get("is_paid"):
         return False
@@ -36,6 +62,69 @@ def normalize_invoice_amounts(invoice, display_currency, rate_map):
     converted["net_amount"] = convert_amount(invoice.get("net_amount"), invoice_currency, display_currency, rate_map)
     converted["currency"] = display_currency
     return converted
+
+
+INVOICE_ORDER_OPTIONS = [
+    "Newest invoice date",
+    "Oldest invoice date",
+    "Highest gross amount",
+    "Lowest gross amount",
+    "Supplier A–Z",
+    "Approved to pay first",
+    "Unpaid first",
+    "Paid first",
+]
+
+
+def _invoice_id_key(invoice):
+    return invoice.get("id") if invoice.get("id") is not None else 0
+
+
+def _sort_by_invoice_date(invoices, newest_first):
+    """Stable sort by invoice_date; invoices with no date always sort last,
+    regardless of direction. Assumes `invoices` is already in the desired
+    tie-break order (e.g. by id) — a stable sort preserves that order among
+    invoices that share the same date."""
+    dated = [inv for inv in invoices if inv.get("invoice_date")]
+    undated = [inv for inv in invoices if not inv.get("invoice_date")]
+    dated = sorted(dated, key=lambda inv: inv.get("invoice_date"), reverse=newest_first)
+    return dated + undated
+
+
+def order_project_invoices(invoices, order_by):
+    """Order the invoices shown in one Project's table (after its existing
+    Project View filters and entity filter have already narrowed the list).
+
+    Deterministic by construction: every branch runs on `ordered`, which is
+    first sorted by invoice id ascending. Python's sort is stable, so any
+    ties left by the requested ordering keep that id-ascending order — id is
+    the final tie-breaker everywhere without needing to name it in every key.
+    The three status-first options group by status, then newest invoice
+    date, then id — achieved the same way: date-sort first (stable, id
+    tie-broken), then a status-sort on top (stable, preserves the date
+    order within each status group).
+    """
+    ordered = sorted(invoices, key=_invoice_id_key)
+
+    if order_by == "Oldest invoice date":
+        return _sort_by_invoice_date(ordered, newest_first=False)
+    if order_by == "Highest gross amount":
+        return sorted(ordered, key=lambda inv: safe_float(inv.get("gross_amount")), reverse=True)
+    if order_by == "Lowest gross amount":
+        return sorted(ordered, key=lambda inv: safe_float(inv.get("gross_amount")))
+    if order_by == "Supplier A–Z":
+        return sorted(ordered, key=lambda inv: (inv.get("supplier_name_raw") or "").lower())
+    if order_by == "Approved to pay first":
+        ordered = _sort_by_invoice_date(ordered, newest_first=True)
+        return sorted(ordered, key=lambda inv: 0 if inv.get("is_approved_to_pay") else 1)
+    if order_by == "Unpaid first":
+        ordered = _sort_by_invoice_date(ordered, newest_first=True)
+        return sorted(ordered, key=lambda inv: 1 if inv.get("is_paid") else 0)
+    if order_by == "Paid first":
+        ordered = _sort_by_invoice_date(ordered, newest_first=True)
+        return sorted(ordered, key=lambda inv: 0 if inv.get("is_paid") else 1)
+    # "Newest invoice date" (the default) and any unrecognized value.
+    return _sort_by_invoice_date(ordered, newest_first=True)
 
 
 def aggregate_invoices(invoices):
@@ -190,7 +279,7 @@ def render_dashboard():
         if st.button("🔄 Refresh"):
             st.rerun()
 
-    all_invoices = get("/invoices/?limit=10000&offset=0") or []
+    all_invoices = fetch_all_invoices_for_dashboard()
     projects = get("/projects/") or []
     entities = get("/entities/") or []
     activity = get("/dashboard/activity") or []
@@ -322,17 +411,26 @@ def render_dashboard():
                 entity_filter_options = {"All entities": None}
                 for e in project_entities:
                     entity_filter_options[e.get("entity") or "Unassigned"] = e.get("entity_id")
-                selected_entity_label = st.selectbox(
-                    "Filter by entity",
-                    options=list(entity_filter_options.keys()),
-                    key=f"entity_filter_{project_key}",
-                )
+                ecol1, ecol2 = st.columns(2)
+                with ecol1:
+                    selected_entity_label = st.selectbox(
+                        "Filter by entity",
+                        options=list(entity_filter_options.keys()),
+                        key=f"entity_filter_{project_key}",
+                    )
+                with ecol2:
+                    invoice_order_by = st.selectbox(
+                        "Order invoices by",
+                        options=INVOICE_ORDER_OPTIONS,
+                        key=f"order_by_{project_key}",
+                    )
                 selected_entity_id = entity_filter_options[selected_entity_label]
                 table_invoices = (
                     [inv for inv in filtered_project_invoices if inv.get("paying_entity_id") == selected_entity_id]
                     if selected_entity_id is not None
                     else filtered_project_invoices
                 )
+                table_invoices = order_project_invoices(table_invoices, invoice_order_by)
                 if table_invoices:
                     invoice_rows = [
                         {
@@ -340,6 +438,8 @@ def render_dashboard():
                             "Invoice #": inv.get("invoice_number") or "—",
                             "Supplier": inv.get("supplier_name_raw") or "—",
                             "Entity": entity_map.get(inv.get("paying_entity_id"), "—"),
+                            "Nature": (inv.get("expense_nature") or "invoice").capitalize(),
+                            "Aging": inv.get("aging_bucket") or "—",
                             "Gross": format_currency(inv.get("gross_amount"), currency_symbol),
                             "VAT": format_currency(inv.get("vat_amount"), currency_symbol),
                             "Net": format_currency(inv.get("net_amount"), currency_symbol),

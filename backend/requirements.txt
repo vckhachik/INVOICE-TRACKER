@@ -40,6 +40,7 @@ pillow==11.3.0
 protobuf==6.33.6
 psycopg2-binary==2.9.11
 pyarrow==21.0.0
+pytest==9.1.1
 pydantic==2.12.5
 pydantic_core==2.41.5
 pydeck==0.9.1

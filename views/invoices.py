@@ -44,13 +44,51 @@ def render_invoice_register():
 
 # ── Tab 1: Register ────────────────────────────────────────────────────────────
 
+AGING_BUCKET_OPTIONS = ["All", "1-30", "31-60", "61-90", "90+", "Not dated", "Future dated"]
+EXPENSE_NATURE_OPTIONS = ["All", "Invoice", "Accrual"]
+OCR_CHECK_STATUS_OPTIONS = ["All", "pending", "needs_review", "auto_accepted", "failed"]
+
+# Plain-language "Order by" choices, each a fixed (sort_by, sort_dir) pair
+# from the backend's existing allowlisted sort fields — no backend change.
+ORDER_BY_OPTIONS = {
+    "Newest invoice date": ("invoice_date", "desc"),
+    "Oldest invoice date": ("invoice_date", "asc"),
+    "Highest gross amount": ("gross_amount", "desc"),
+    "Lowest gross amount": ("gross_amount", "asc"),
+    "Supplier A–Z": ("supplier", "asc"),
+    "Project A–Z": ("project", "asc"),
+}
+
+STATUS_PRESETS = ["All", "Needs OCR check", "Awaiting approval", "Approved, unpaid", "Paid"]
+
+
+def _status_preset_filters(preset):
+    """Map a Register status preset to (is_paid, is_approved_to_pay, forced_review_status).
+
+    forced_review_status, when not None, is what "Needs OCR check" means in
+    terms of the existing review_status field — the register only supports a
+    single review_status value server-side, so this preset uses the one
+    state whose meaning is literally "needs a human to check the OCR
+    extraction" rather than combining multiple states.
+    """
+    if preset == "Needs OCR check":
+        return None, None, "needs_review"
+    if preset == "Awaiting approval":
+        return False, False, None
+    if preset == "Approved, unpaid":
+        return False, True, None
+    if preset == "Paid":
+        return True, None, None
+    return None, None, None  # "All"
+
+
 def _render_register():
     top_col1, top_col2, top_col3 = st.columns([1, 3, 2])
     with top_col1:
         if st.button("🔄 Refresh"):
             st.rerun()
     with top_col2:
-        page_size = st.selectbox("Rows", [25, 50, 100], index=1)
+        page_size = st.selectbox("Rows per page", [25, 50, 100], index=1)
     with top_col3:
         display_currency = st.selectbox(
             "Equivalent in",
@@ -73,42 +111,85 @@ def _render_register():
     entity_options = {"(unmapped)": None}
     entity_options.update({e["name"]: e["id"] for e in _entities if e.get("name")})
 
-    with st.expander("🔍 Filters", expanded=True):
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            filter_paid = st.selectbox("Payment Status", ["All", "Unpaid", "Paid"])
-        with col2:
-            filter_approved = st.selectbox("Approval Status", ["All", "Not Approved", "Approved"])
-        with col3:
+    project_filter_options = {"All": None}
+    project_filter_options.update(project_options)
+    entity_filter_options = {"All": None}
+    entity_filter_options.update({e["name"]: e["id"] for e in _entities if e.get("name")})
+
+    preset = st.radio("Status", STATUS_PRESETS, horizontal=True, key="register_status_preset")
+    search_term = st.text_input("Search supplier or invoice number", placeholder="e.g. Acme or INV-2026-014")
+    order_label = st.selectbox("Order by", list(ORDER_BY_OPTIONS.keys()), key="register_order_by")
+
+    with st.expander("More filters", expanded=False):
+        col5, col6, col7, col8 = st.columns(4)
+        with col5:
+            filter_nature = st.selectbox("Expense Nature", EXPENSE_NATURE_OPTIONS)
+        with col6:
+            filter_aging = st.selectbox("Aging", AGING_BUCKET_OPTIONS)
+        with col7:
+            filter_project_key = st.selectbox("Project", list(project_filter_options.keys()))
+        with col8:
+            filter_entity_key = st.selectbox("Entity", list(entity_filter_options.keys()))
+
+        col9, col10 = st.columns(2)
+        with col9:
             filter_vat = st.selectbox("VAT Status", ["All", "Unrecovered", "Recovered"])
-        with col4:
-            filter_review = st.selectbox("Review Status", ["All", "pending", "needs_review", "auto_accepted", "failed"])
+        with col10:
+            ocr_overridden = preset == "Needs OCR check"
+            filter_ocr = st.selectbox(
+                "OCR Check Status", OCR_CHECK_STATUS_OPTIONS, disabled=ocr_overridden,
+                help="The 'Needs OCR check' status preset above overrides this." if ocr_overridden else None,
+            )
 
-    is_paid = None if filter_paid == "All" else (filter_paid == "Paid")
-    is_approved = None if filter_approved == "All" else (filter_approved == "Approved")
+    preset_is_paid, preset_is_approved, preset_review_status = _status_preset_filters(preset)
+    is_paid = preset_is_paid
+    is_approved = preset_is_approved
     is_vat = None if filter_vat == "All" else (filter_vat == "Recovered")
-    review_status = None if filter_review == "All" else filter_review
+    review_status = preset_review_status or (None if filter_ocr == "All" else filter_ocr)
+    expense_nature = None if filter_nature == "All" else filter_nature.lower()
+    aging_bucket = None if filter_aging == "All" else filter_aging
+    project_id_filter = project_filter_options.get(filter_project_key)
+    entity_id_filter = entity_filter_options.get(filter_entity_key)
+    sort_by, sort_dir = ORDER_BY_OPTIONS.get(order_label, ("invoice_date", "desc"))
 
-    invoices = fetch_invoices(
+    # Reset to page 1 whenever any filter, search term, sort choice, or page
+    # size changes — otherwise a narrowed-down filter can leave the register
+    # stuck on an offset past the end of the new result set.
+    filter_signature = (
+        is_paid, is_approved, is_vat, review_status, expense_nature, aging_bucket,
+        project_id_filter, entity_id_filter, search_term, sort_by, sort_dir, page_size,
+    )
+    if st.session_state.get("register_filter_signature") != filter_signature:
+        st.session_state["register_filter_signature"] = filter_signature
+        st.session_state["register_offset"] = 0
+
+    offset = st.session_state.get("register_offset", 0)
+
+    result = fetch_invoices(
         is_paid=is_paid, is_approved_to_pay=is_approved,
         is_vat_recovered=is_vat, review_status=review_status,
-        limit=page_size, offset=0,
+        expense_nature=expense_nature, aging_bucket=aging_bucket,
+        project_id=project_id_filter, paying_entity_id=entity_id_filter,
+        search=search_term, sort_by=sort_by, sort_dir=sort_dir,
+        limit=page_size, offset=offset,
     )
+    invoices = result.get("items", [])
+    total = result.get("total", 0)
 
     if not invoices:
         st.info("No invoices found for the selected filters.")
         return
 
-    # Totals in selected display currency
+    # Totals in selected display currency (this page only)
     total_gross_converted = sum(
         convert_amount(inv.get("gross_amount"), inv.get("currency") or "GBP", display_currency, rate_map)
         for inv in invoices
     )
     total_col1, total_col2, total_col3 = st.columns(3)
     with total_col1:
-        st.metric(f"Total Gross ({disp_symbol.strip()})", format_converted(total_gross_converted, display_currency))
+        st.metric(f"Total Gross ({disp_symbol.strip()}) — this page", format_converted(total_gross_converted, display_currency))
     with total_col2:
-        st.markdown(f"**{len(invoices)} invoice(s) loaded**")
+        st.markdown(f"**{total} matching invoice(s)**")
     if not fx_rates:
         with total_col3:
             st.caption("⚠️ No FX rates in DB — using fallback rates. Set real rates in Settings → FX Rates.")
@@ -120,6 +201,8 @@ def _render_register():
             "Supplier": inv.get("supplier_name_raw") or "-",
             "Entity": inv.get("paying_entity_raw") or "-",
             "Project": project_id_to_name.get(inv.get("project_id"), inv.get("project_id") or "-"),
+            "Nature": (inv.get("expense_nature") or "invoice").capitalize(),
+            "Aging": inv.get("aging_bucket") or "-",
             "Gross (native)": format_native(inv.get("gross_amount"), inv.get("currency") or "GBP"),
             equiv_col_label: format_converted(
                 convert_amount(inv.get("gross_amount"), inv.get("currency") or "GBP", display_currency, rate_map),
@@ -141,6 +224,20 @@ def _render_register():
     if "ID" in df.columns:
         df["ID"] = df["ID"].astype(str)
     st.dataframe(df, width="stretch", hide_index=True)
+
+    total_pages = max(1, -(-total // page_size))  # ceil division
+    current_page = offset // page_size + 1
+    pg_col1, pg_col2, pg_col3 = st.columns([1, 2, 1])
+    with pg_col1:
+        if st.button("⬅ Previous", disabled=offset <= 0, key="register_prev_page"):
+            st.session_state["register_offset"] = max(0, offset - page_size)
+            st.rerun()
+    with pg_col2:
+        st.markdown(f"<div style='text-align:center'>Page {current_page} of {total_pages} — {total} total</div>", unsafe_allow_html=True)
+    with pg_col3:
+        if st.button("Next ➡", disabled=offset + page_size >= total, key="register_next_page"):
+            st.session_state["register_offset"] = offset + page_size
+            st.rerun()
 
     st.markdown("---")
     st.subheader("Invoice Actions")
@@ -189,6 +286,8 @@ def _render_register():
         st.write(f"**Due Date:** {format_date(selected.get('due_date'))}")
         st.write(f"**Paid:** {format_status(selected.get('is_paid'))}")
         st.write(f"**Approved:** {format_status(selected.get('is_approved_to_pay'))}")
+        st.write(f"**Nature:** {(selected.get('expense_nature') or 'invoice').capitalize()}")
+        st.write(f"**Aging:** {selected.get('aging_bucket') or '-'}")
 
     # ── Linked credit notes ────────────────────────────────────────────────────
     if len(selected_invoices) == 1:
@@ -315,6 +414,11 @@ def _render_register():
             review_status_index = REVIEW_STATUS_OPTIONS.index(current_review_status) if current_review_status in REVIEW_STATUS_OPTIONS else 0
             edit_review_status = st.selectbox("Review Status", REVIEW_STATUS_OPTIONS, index=review_status_index)
 
+            NATURE_OPTIONS = ["Invoice", "Accrual"]
+            current_nature = (selected.get("expense_nature") or "invoice").capitalize()
+            nature_index = NATURE_OPTIONS.index(current_nature) if current_nature in NATURE_OPTIONS else 0
+            edit_nature = st.selectbox("Nature of Expense", NATURE_OPTIONS, index=nature_index)
+
             if st.button("💾 Save Manual Changes", key=f"save_edit_{selected.get('id')}"):
                 payload = {
                     "invoice_number": edit_invoice_number or None,
@@ -329,6 +433,7 @@ def _render_register():
                     "vat_amount": edit_vat_amount or None,
                     "net_amount": edit_net_amount or None,
                     "review_status": edit_review_status,
+                    "expense_nature": edit_nature.lower(),
                 }
                 result = update_invoice(selected.get("id"), payload)
                 if result:
@@ -564,11 +669,16 @@ def _render_manual_entry():
             net_amount = st.number_input("Net Amount", min_value=0.00, step=0.01, format="%.2f", help="Auto-calculated if left blank (Gross - VAT)")
 
         st.markdown("**Optional Details**")
-        col10, col11 = st.columns(2)
+        col10, col11, col12 = st.columns(3)
         with col10:
             due_date = st.date_input("Due Date (Optional)", value=None)
         with col11:
             currency = st.selectbox("Currency", options=SUPPORTED_CURRENCIES, index=0)
+        with col12:
+            expense_nature = st.selectbox(
+                "Nature of Expense", options=["Invoice", "Accrual"], index=0,
+                help="Finance can reclassify this later from the Register.",
+            )
 
         description = st.text_area("Description (Optional)", placeholder="Additional notes or description")
 
@@ -622,6 +732,7 @@ def _render_manual_entry():
             "project_id": project_options[project_key],
             "vat_amount": vat_amount if vat_amount > 0 else None,
             "currency": currency,
+            "expense_nature": expense_nature.lower(),
         }
         if paying_entity_raw.strip():
             base_payload["paying_entity_raw"] = paying_entity_raw.strip()
@@ -944,6 +1055,7 @@ def _render_recurring():
             with c3:
                 st.write(f"**Last generated:** {r.get('last_generated_at') or '—'}")
                 st.write(f"**Occurrences:** {occ}")
+                st.write(f"**Nature:** {(r.get('expense_nature') or 'invoice').capitalize()}")
                 if r.get("description"):
                     st.write(f"**Note:** {r['description']}")
 
@@ -984,6 +1096,13 @@ def _render_recurring():
                         new_end_date = ef8.date_input("End date (optional)", value=r.get("end_date") or None)
                         new_max_occ = ef9.number_input("Max occurrences (optional)", value=int(r.get("max_occurrences") or 0), min_value=0, step=1)
                         new_desc = st.text_input("Description / note", value=r.get("description") or "")
+                        NATURE_OPTIONS = ["Invoice", "Accrual"]
+                        current_nature = (r.get("expense_nature") or "invoice").capitalize()
+                        nature_idx = NATURE_OPTIONS.index(current_nature) if current_nature in NATURE_OPTIONS else 0
+                        new_nature = st.selectbox(
+                            "Nature of Expense", NATURE_OPTIONS, index=nature_idx,
+                            help="New occurrences generated from this template will use this nature.",
+                        )
 
                         if st.form_submit_button("💾 Save changes", type="primary"):
                             payload = {
@@ -994,6 +1113,7 @@ def _render_recurring():
                                 "frequency": new_freq,
                                 "frequency_interval": int(new_interval),
                                 "description": new_desc or None,
+                                "expense_nature": new_nature.lower(),
                             }
                             if new_freq == "monthly" and new_dom:
                                 payload["day_of_month"] = int(new_dom)

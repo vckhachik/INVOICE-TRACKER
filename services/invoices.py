@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 from .api import get, post, patch, delete, EXTRACTION_TIMEOUT
 
 
@@ -6,9 +8,19 @@ def fetch_invoices(
     is_approved_to_pay=None,
     is_vat_recovered=None,
     review_status=None,
+    expense_nature=None,
+    aging_bucket=None,
+    project_id=None,
+    paying_entity_id=None,
+    search=None,
+    sort_by=None,
+    sort_dir="desc",
     limit=100,
     offset=0,
 ):
+    """Returns {"items": [...], "total": N}. All filtering, sorting, and
+    pagination happens server-side — this only forwards the selected
+    controls as query params."""
     params = []
 
     if is_paid is not None:
@@ -23,6 +35,25 @@ def fetch_invoices(
     if review_status:
         params.append(f"review_status={review_status}")
 
+    if expense_nature:
+        params.append(f"expense_nature={expense_nature}")
+
+    if aging_bucket:
+        params.append(f"aging_bucket={quote(aging_bucket, safe='')}")
+
+    if project_id is not None:
+        params.append(f"project_id={project_id}")
+
+    if paying_entity_id is not None:
+        params.append(f"paying_entity_id={paying_entity_id}")
+
+    if search and search.strip():
+        params.append(f"search={quote(search.strip(), safe='')}")
+
+    if sort_by:
+        params.append(f"sort_by={sort_by}")
+
+    params.append(f"sort_dir={sort_dir}")
     params.append(f"limit={limit}")
     params.append(f"offset={offset}")
 
@@ -30,7 +61,11 @@ def fetch_invoices(
     path = f"/invoices/{query}"
     if path == "/invoices":
         path = "/invoices/"
-    return get(path)
+
+    result = get(path)
+    if not result:
+        return {"items": [], "total": 0}
+    return result
 
 
 def fetch_invoice(invoice_id: int):

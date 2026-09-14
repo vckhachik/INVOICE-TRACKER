@@ -6,14 +6,28 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.core.deps import current_user
 from app.core.permissions import require_permission, has_permission, Permission
-from app.models.models import Invoice, InvoiceFile, InvoiceActivityLog, User
-from app.schemas.invoice import InvoiceResponse, InvoiceStatusUpdate, ManualInvoiceCreate
+from app.models.models import Invoice, InvoiceFile, InvoiceActivityLog, Project, User
+from app.schemas.invoice import (
+    InvoiceListResponse,
+    InvoiceResponse,
+    InvoiceStatusUpdate,
+    ManualInvoiceCreate,
+    VALID_EXPENSE_NATURES,
+)
 from app.services.activity import log_invoice_activity
+from app.services.aging import (
+    ALL_BUCKET_LABELS,
+    FUTURE_DATED,
+    NOT_DATED,
+    bucket_date_range,
+    compute_aging,
+)
 from app.services.entity_extraction import extract_entity_from_text
 from app.services.extraction import extract_invoice
 from app.core.storage import delete_stored_file, resolve_stored_path, write_upload
@@ -23,6 +37,19 @@ router = APIRouter(prefix="/invoices", tags=["Invoices"])
 ALLOWED_TYPES = {"application/pdf", "image/png", "image/jpeg"}
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
+
+# Sort keys the register may request, allowlisted to prevent arbitrary column/expression injection.
+SORT_FIELDS = {
+    "invoice_date", "due_date", "supplier", "project",
+    "gross_amount", "aging", "paid", "approval", "expense_nature",
+}
+
+
+def _attach_aging(invoice: Invoice, today: Optional[date] = None) -> Invoice:
+    aging_days, aging_bucket = compute_aging(invoice.invoice_date, today)
+    invoice.aging_days = aging_days
+    invoice.aging_bucket = aging_bucket
+    return invoice
 
 
 def clean_entity(name: str) -> Optional[str]:
@@ -56,7 +83,7 @@ def parse_date(val) -> Optional[date]:
         return None
 
 
-@router.get("/", response_model=List[InvoiceResponse])
+@router.get("/", response_model=InvoiceListResponse)
 def get_invoices(
     db: Session = Depends(get_db),
     actor: User = Depends(current_user),
@@ -64,9 +91,38 @@ def get_invoices(
     is_approved_to_pay: Optional[bool] = None,
     is_vat_recovered: Optional[bool] = None,
     review_status: Optional[str] = None,
+    expense_nature: Optional[str] = None,
+    aging_bucket: Optional[str] = None,
+    project_id: Optional[int] = None,
+    paying_entity_id: Optional[int] = None,
+    search: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "desc",
     limit: int = 100,
     offset: int = 0,
 ):
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be >= 0")
+    if sort_dir not in ("asc", "desc"):
+        raise HTTPException(status_code=400, detail="sort_dir must be 'asc' or 'desc'")
+    if sort_by is not None and sort_by not in SORT_FIELDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"sort_by must be one of: {', '.join(sorted(SORT_FIELDS))}",
+        )
+    if expense_nature is not None and expense_nature not in VALID_EXPENSE_NATURES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"expense_nature must be one of: {', '.join(sorted(VALID_EXPENSE_NATURES))}",
+        )
+    if aging_bucket is not None and aging_bucket not in ALL_BUCKET_LABELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"aging_bucket must be one of: {', '.join(ALL_BUCKET_LABELS)}",
+        )
+
     query = db.query(Invoice)
 
     if is_paid is not None:
@@ -81,12 +137,84 @@ def get_invoices(
     if review_status:
         query = query.filter(Invoice.review_status == review_status)
 
-    return (
-        query.order_by(Invoice.created_at.desc())
+    if expense_nature is not None:
+        query = query.filter(Invoice.expense_nature == expense_nature)
+
+    if project_id is not None:
+        query = query.filter(Invoice.project_id == project_id)
+
+    if paying_entity_id is not None:
+        query = query.filter(Invoice.paying_entity_id == paying_entity_id)
+
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                Invoice.supplier_name_raw.ilike(like),
+                Invoice.invoice_number.ilike(like),
+            )
+        )
+
+    today = date.today()
+
+    if aging_bucket is not None:
+        if aging_bucket == NOT_DATED:
+            query = query.filter(Invoice.invoice_date.is_(None))
+        elif aging_bucket == FUTURE_DATED:
+            query = query.filter(Invoice.invoice_date.isnot(None), Invoice.invoice_date > today)
+        else:
+            min_date, max_date = bucket_date_range(aging_bucket, today)
+            query = query.filter(Invoice.invoice_date.isnot(None), Invoice.invoice_date <= max_date)
+            if min_date is not None:
+                query = query.filter(Invoice.invoice_date >= min_date)
+
+    # Total must be counted before sort-only joins/ordering are applied, so it
+    # reflects every matching row regardless of the page currently requested.
+    total = query.count()
+
+    descending = sort_dir == "desc"
+    null_date_last = case((Invoice.invoice_date.is_(None), 1), else_=0)
+
+    if sort_by == "invoice_date":
+        order_cols = [null_date_last, Invoice.invoice_date.desc() if descending else Invoice.invoice_date.asc()]
+    elif sort_by == "due_date":
+        null_due_last = case((Invoice.due_date.is_(None), 1), else_=0)
+        order_cols = [null_due_last, Invoice.due_date.desc() if descending else Invoice.due_date.asc()]
+    elif sort_by == "aging":
+        # aging_days grows as invoice_date gets older, so "descending aging"
+        # (most aged first) is invoice_date ascending, and vice versa.
+        # Undated invoices have no aging value and always sort last.
+        order_cols = [null_date_last, Invoice.invoice_date.asc() if descending else Invoice.invoice_date.desc()]
+    elif sort_by == "supplier":
+        col = func.lower(Invoice.supplier_name_raw)
+        order_cols = [col.desc() if descending else col.asc()]
+    elif sort_by == "project":
+        query = query.outerjoin(Project, Invoice.project_id == Project.id)
+        null_project_last = case((Project.name.is_(None), 1), else_=0)
+        col = func.lower(Project.name)
+        order_cols = [null_project_last, col.desc() if descending else col.asc()]
+    elif sort_by == "gross_amount":
+        order_cols = [Invoice.gross_amount.desc() if descending else Invoice.gross_amount.asc()]
+    elif sort_by == "paid":
+        order_cols = [Invoice.is_paid.desc() if descending else Invoice.is_paid.asc()]
+    elif sort_by == "approval":
+        order_cols = [Invoice.is_approved_to_pay.desc() if descending else Invoice.is_approved_to_pay.asc()]
+    elif sort_by == "expense_nature":
+        order_cols = [Invoice.expense_nature.desc() if descending else Invoice.expense_nature.asc()]
+    else:
+        order_cols = [Invoice.created_at.desc()]
+
+    # Stable tie-breaker so paging never repeats or skips rows when the
+    # primary sort key has duplicates.
+    invoices = (
+        query.order_by(*order_cols, Invoice.id.asc())
         .offset(offset)
         .limit(limit)
         .all()
     )
+
+    items = [InvoiceResponse.model_validate(_attach_aging(inv, today)) for inv in invoices]
+    return InvoiceListResponse(items=items, total=total)
 
 
 @router.post("/upload", response_model=InvoiceResponse)
@@ -163,7 +291,7 @@ def upload_invoice(
         db.commit()
         db.refresh(invoice)
 
-        return invoice
+        return _attach_aging(invoice)
 
     except HTTPException:
         db.rollback()
@@ -303,7 +431,7 @@ def get_invoice(
     invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    return invoice
+    return _attach_aging(invoice)
 
 
 @router.get("/{invoice_id}/file")
@@ -362,6 +490,7 @@ def update_invoice(
         "ocr_status": invoice.ocr_status,
         "extraction_status": invoice.extraction_status,
         "is_legacy": invoice.is_legacy,
+        "expense_nature": invoice.expense_nature,
     }
 
     allowed_fields = {
@@ -380,10 +509,17 @@ def update_invoice(
         "ocr_status",
         "extraction_status",
         "is_legacy",
+        "expense_nature",
     }
 
     date_fields = {"invoice_date", "due_date"}
     amount_fields = {"gross_amount", "vat_amount", "net_amount"}
+
+    if "expense_nature" in data and data["expense_nature"] not in VALID_EXPENSE_NATURES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"expense_nature must be one of: {', '.join(sorted(VALID_EXPENSE_NATURES))}",
+        )
 
     for key, value in data.items():
         if key not in allowed_fields:
@@ -413,6 +549,7 @@ def update_invoice(
         "ocr_status": invoice.ocr_status,
         "extraction_status": invoice.extraction_status,
         "is_legacy": invoice.is_legacy,
+        "expense_nature": invoice.expense_nature,
     }
 
     log_invoice_activity(
@@ -429,7 +566,7 @@ def update_invoice(
 
     db.commit()
     db.refresh(invoice)
-    return invoice
+    return _attach_aging(invoice)
 
 
 @router.patch("/{invoice_id}/status", response_model=InvoiceResponse)
@@ -536,7 +673,7 @@ def update_invoice_status(
 
     db.commit()
     db.refresh(invoice)
-    return invoice
+    return _attach_aging(invoice)
 
 
 @router.delete("/{invoice_id}")
@@ -773,6 +910,7 @@ def create_manual_invoice(
             extraction_status="manual",
             review_status="auto_accepted",
             is_legacy=False,
+            expense_nature=invoice_data.expense_nature,
         )
         db.add(invoice)
         db.flush()
@@ -798,13 +936,14 @@ def create_manual_invoice(
                 "due_date": invoice_data.due_date.isoformat() if invoice_data.due_date else None,
                 "description": invoice_data.description,
                 "currency": invoice_data.currency,
+                "expense_nature": invoice_data.expense_nature,
             },
         )
 
         db.commit()
         db.refresh(invoice)
 
-        return invoice
+        return _attach_aging(invoice)
 
     except Exception as e:
         db.rollback()

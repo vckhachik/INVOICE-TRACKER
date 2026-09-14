@@ -74,6 +74,8 @@ def update(
         r.is_active = body.is_active
     if body.description is not None:
         r.description = body.description
+    if body.expense_nature is not None:
+        r.expense_nature = body.expense_nature
 
     db.commit()
     db.refresh(r)

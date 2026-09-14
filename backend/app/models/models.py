@@ -97,6 +97,7 @@ class Invoice(Base):
     is_vat_recovered = Column(Boolean, default=False)
     is_approved_to_pay = Column(Boolean, default=False)
     is_legacy = Column(Boolean, default=False, nullable=False)
+    expense_nature = Column(String(20), nullable=False, default="invoice", server_default="invoice")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
 
@@ -303,6 +304,7 @@ class RecurringInvoice(Base):
     next_due_date = Column(Date, nullable=False)
     last_generated_at = Column(DateTime)
     is_active = Column(Boolean, nullable=False, default=True)
+    expense_nature = Column(String(20), nullable=False, default="invoice", server_default="invoice")
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())

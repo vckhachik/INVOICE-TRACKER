@@ -63,6 +63,7 @@ def _generate_one(db: Session, r: RecurringInvoice) -> Invoice:
         review_status="auto_accepted",
         is_approved_to_pay=False,
         is_legacy=False,
+        expense_nature=r.expense_nature,
     )
     db.add(invoice)
     db.flush()
@@ -151,6 +152,7 @@ def create_recurring_invoice(db: Session, data, created_by: int) -> RecurringInv
         next_due_date=first_due,
         is_active=True,
         created_by=created_by,
+        expense_nature=data.expense_nature,
     )
     db.add(r)
     db.flush()

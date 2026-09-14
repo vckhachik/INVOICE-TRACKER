@@ -4,6 +4,7 @@ from datetime import datetime, date
 from decimal import Decimal
 
 VALID_FREQUENCIES = {"daily", "weekly", "monthly", "yearly"}
+VALID_EXPENSE_NATURES = {"invoice", "accrual"}
 
 
 class RecurringInvoiceCreate(BaseModel):
@@ -23,6 +24,7 @@ class RecurringInvoiceCreate(BaseModel):
     start_date: date
     end_date: Optional[date] = None
     max_occurrences: Optional[int] = Field(default=None, ge=1)
+    expense_nature: str = "invoice"
 
     @field_validator("gross_amount")
     @classmethod
@@ -36,6 +38,13 @@ class RecurringInvoiceCreate(BaseModel):
     def validate_frequency(cls, v):
         if v not in VALID_FREQUENCIES:
             raise ValueError(f"frequency must be one of: {', '.join(sorted(VALID_FREQUENCIES))}")
+        return v
+
+    @field_validator("expense_nature")
+    @classmethod
+    def validate_expense_nature(cls, v):
+        if v not in VALID_EXPENSE_NATURES:
+            raise ValueError(f"expense_nature must be one of: {', '.join(sorted(VALID_EXPENSE_NATURES))}")
         return v
 
     @model_validator(mode="after")
@@ -59,6 +68,14 @@ class RecurringInvoiceUpdate(BaseModel):
     max_occurrences: Optional[int] = Field(default=None, ge=1)
     is_active: Optional[bool] = None
     description: Optional[str] = None
+    expense_nature: Optional[str] = None
+
+    @field_validator("expense_nature")
+    @classmethod
+    def validate_expense_nature(cls, v):
+        if v is not None and v not in VALID_EXPENSE_NATURES:
+            raise ValueError(f"expense_nature must be one of: {', '.join(sorted(VALID_EXPENSE_NATURES))}")
+        return v
 
 
 class RecurringInvoiceResponse(BaseModel):
@@ -83,6 +100,7 @@ class RecurringInvoiceResponse(BaseModel):
     next_due_date: date
     last_generated_at: Optional[datetime] = None
     is_active: bool
+    expense_nature: str = "invoice"
     created_by: int
     created_at: datetime
 
